@@ -1,0 +1,5 @@
+Existing projects:
+
+VBParser, using JavaCC
+Aspa, using ANTLR
+vb2py, using python-simpleparse

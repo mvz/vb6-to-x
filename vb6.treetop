@@ -1,0 +1,34 @@
+grammar VB6
+  rule version
+    'VERSION' space '5.00'
+  end
+
+  rule layout
+    'Begin' space 
+    
+  rule attribute
+    'Attribute' space assignment
+  end
+
+  rule assignment
+    identifier space '=' space expression
+  end
+
+  rule statement
+    command space arguments
+  end
+
+  rule arguments
+    (expression comma space arguments / expression)
+  end
+
+  # Todo: Line continuation
+  rule space
+    ' '+
+  end
+
+  rule eol
+    [\n\r]+
+  end
+
+end
