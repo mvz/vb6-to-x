@@ -1,11 +1,12 @@
 grammar VB6
   rule vb
-    version?
-    layout?
+    version:version?
+    layout:layout?
+    <node(:vb6)>
   end
 
   rule version
-    space? 'VERSION' space '5.00' full_eol
+    space? 'VERSION' space version:'5.00' full_eol <node(:versionspec)>
   end
 
   rule layout

@@ -6,10 +6,10 @@ class BasicsTest < Test::Unit::TestCase
       @parser = VB6Parser.new
     end
     should "parse version" do
-      assert_equal [], @parser.parse("VERSION 5.00")
+      assert_equal [], VB6Parser.ast("VERSION 5.00")
     end
     should "parse empty string" do
-      assert_equal [], @parser.parse("")
+      assert_equal [], VB6Parser.ast("")
     end
   end
 end
