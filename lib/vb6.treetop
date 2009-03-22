@@ -1,4 +1,8 @@
 grammar VB6
+  rule vb
+    version?
+    layout?
+  end
 
   rule version
     space? 'VERSION' space '5.00' full_eol

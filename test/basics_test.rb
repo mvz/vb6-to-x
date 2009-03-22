@@ -9,7 +9,7 @@ class BasicsTest < Test::Unit::TestCase
       assert_equal [], @parser.parse("VERSION 5.00")
     end
     should "parse empty string" do
-      assert_equal [], @parser.parse(" ")
+      assert_equal [], @parser.parse("")
     end
   end
 end
