@@ -1,6 +1,7 @@
 grammar VB6
+
   rule version
-    'VERSION' space '5.00'
+    space? 'VERSION' space '5.00' full_eol
   end
 
   rule layout
@@ -29,9 +30,12 @@ grammar VB6
     (' ' / "\t" / "\r" / "\f" / " _\r\n")+
   end
 
-  # TODO: comments are also part of the eol
-  rule eol
-    "\n" / EOF
+  rule full_eol
+    space? eol
   end
 
+  # TODO: comments are also part of the eol
+  rule eol
+    "\n" / !.
+  end
 end
