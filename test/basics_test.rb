@@ -7,10 +7,14 @@ class BasicsTest < Test::Unit::TestCase
       @parser = VB6Parser.new
     end
     should "parse version" do
-      assert_equal [], VB6Parser.ast("VERSION 5.00")
+      assert_equal [[:version, "5.00"]], parse_tree_array("VERSION 5.00")
     end
     should "parse empty string" do
-      assert_equal [], VB6Parser.ast("")
+      assert_equal [], parse_tree_array("")
     end
+  end
+
+  def parse_tree_array(s)
+    ArrayVisitor.visit(VB6Parser.ast(s))
   end
 end

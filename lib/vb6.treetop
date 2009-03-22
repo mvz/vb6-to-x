@@ -7,7 +7,7 @@ module VB6ToX
     end
 
     rule version
-      space? 'VERSION' space version:'5.00' full_eol <node(:version)>
+      space? 'VERSION' space value:'5.00' full_eol <node(:version)>
     end
 
     rule layout
