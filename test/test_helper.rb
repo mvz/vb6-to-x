@@ -1,0 +1,6 @@
+require 'test/unit'
+require 'rubygems'
+require 'treetop'
+require 'shoulda'
+$:.unshift File.dirname(__FILE__) + '/../lib'
+require 'vb6'
