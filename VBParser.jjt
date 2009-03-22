@@ -1,0 +1,2050 @@
+/*
+ * Copyright 2005-2006 Paul Cager.
+ * 
+ * www.paulcager.org
+ * 
+ * This file is part of cager.parser.
+ * 
+ * cager.parser is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ * 
+ * cager.parser is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with cager.parser; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+*/
+
+/*
+**  The TODO list:
+**      12. It should handle a ":" appearing at the end of an inline If:
+**              If x Then MsgBox "Hello":
+**          (a trailing colon is handled in other cases).
+**
+**  The following have been fixed in version 3
+**      1.  "Circle", "Line", "Pset" methods have special syntax. Best approach is
+**          probably to skip to the end of line. It may also be best to handle
+**          other peculiarities (such as .Print) in the same way.
+**      2.  Open strRegFilename For Input Access Read Lock Read Write As #iFile will
+**          fail because the token manager will read the "#if" as a conditional compilation.
+**          Make it active only at start of line??
+**          Also, we currently parse both the "Then" and "Else" halves of conditionally
+**          compiled code. Should we only parse one half (but which to choose?)
+**      3.  Print "Hello" does not work?
+**      4.  "With New X" does not work.
+**      5.  "Dim X!" is legal, the "!" indicating a float. It is distinguished from
+**          "x = rs!columnName" by devious TokenManager processing
+**      6.  Handles "Select Case" statements more gracefully, and generates sensible
+**          AST nodes.
+**      7.  Handle "Option Private Module"
+**      8.  Handle "x = rs![Column Name With Spaces]".
+**      9.  Handle "x = Input(1, #1)" and others.
+**      10. Handle "Set Property = x".
+**      11. Allow "enum" etc. as a name within "Type" declarations.
+**      13. Do not add extra ":" to labels or extra "\n" to comments.
+**      14. Generate correct parse tree for DotOperand productions, e.g. for "Thing.Func(x)"
+**      15. Corrected precedence of unary "Not" operator.
+**      16. Included option to process form's "widgets" (turned off by default).
+**      17. Created new JJTree node for a ParamSpec, and included accessors for Optional, ByVal,
+**          ByRef and ParamArray attributes.
+**      18. Removed token definitions such as <OPEN> that are not part of the core language.
+**      19. Changed way Statements() production works. It now continually loops calling the
+**          Statement() production until it finds tokens indicating an "end-block", e.g. tokens
+**          such as "End Sub" or "End If". This avoids a troublesome problem with nested
+**          semantic / syntactic lookahead.
+**      20. Used parser backtracking to parse irregularly formed statements, such as the
+**          "Open" statement. This means I can write productions for the main part
+**          of VB without worrying about these anachronisms.
+*/
+
+
+options {
+  MULTI = true;
+  VISITOR = true;
+  NODE_DEFAULT_VOID = true;
+  NODE_SCOPE_HOOK = true;
+  IGNORE_CASE = true;
+  JAVA_UNICODE_ESCAPE = false;
+  UNICODE_INPUT = false;
+  COMMON_TOKEN_ACTION = true;
+  STATIC = false;
+//  DEBUG_PARSER = true;
+//  DEBUG_LOOKAHEAD = true;
+//  DEBUG_TOKEN_MANAGER = true;
+//  FORCE_LA_CHECK = true;
+}
+
+PARSER_BEGIN(VBParser)
+
+package cager.parser;
+
+import java.io.*;
+
+public class VBParser {
+
+  final public ASTCompilationUnit CompilationUnit() throws ParseException
+  {
+      return CompilationUnit(false);
+  }
+
+  private void jjtreeOpenNodeScope(Node n)
+  {
+      ((SimpleNode)n).setFirstToken(getToken(1));
+  }
+
+
+  private void jjtreeCloseNodeScope(Node n)
+  {
+      // Check that we have consumed at least one token.
+      SimpleNode sn = (SimpleNode)n;
+      if (sn.getFirstToken() == getToken(1))
+      {
+          // Not consumed any tokens. Set the first token to null
+          // to indicate that the list is empty. Set the last
+          // token to the "next" token, so that if we create children
+          // within this node, we know where to link in the corresponding
+          // tokens.
+          sn.setFirstToken(null);
+          sn.setLastToken(getToken(1));
+      }
+      else
+      {
+          sn.setLastToken(getToken(0));
+      }
+  }
+
+
+    /**
+    **  do the next tokens indicate the end of a block of
+    **  statements (see the "Statements" production for an explanation
+    ** of what is going on).
+    */
+
+    private boolean isEndBlock()
+    {
+        switch (getToken(1).kind)
+        {
+            case ELSEIF:
+            case ELSE:
+            case LOOP:
+            case WEND:
+            case NEXT:
+            case CASE:
+            case EOF:
+                return true;
+            case END:
+                switch (getToken(2).kind)
+                {
+                    case IF:
+                    case WITH:
+                    case SELECT:
+                    case SUB:
+                    case FUNCTION:
+                    case PROPERTY:
+                        return true;
+                }
+        }
+
+        return false;
+    }
+
+  /**
+  **    Used to distinguish "a.b" (object a's method called b) and "a .b" (".b" is a parameter to method a).
+  **    See
+  */
+  private boolean isBinarySuffix()
+  {
+      Token t = getToken(1);
+      int kind = t.kind;
+
+      //System.out.println("isBinarySuffix: " + (t.specialToken == null && (kind == DOT || kind == LPAREN || kind == BANG)));
+      //(new Exception()).printStackTrace();
+
+      // It is a binary suffix if it is not preceded by a space, and it is a ".", "(", or "!".
+
+      return t.specialToken == null && (kind == DOT || kind == LPAREN || kind == BANG);
+  }
+
+
+  /**
+  **    Some VB contructs have such preculiar syntax that I have decided not to attempt to parse
+  **    them. For example the built-in line "method" has the syntax:
+  **        Line [Step] (x1, y1) - [Step] (x2, y2), [color], [B][F]
+  **    so a call could look like:
+  **        Line (X1, Y1)-Step(X2, Y2), Color, BF
+  **    See also: SpecialStatement
+  */
+
+  static
+  private boolean isSpecialMethod(String name)
+  {
+      name = name.toLowerCase();
+
+      //System.out.println("IsSpecialMethod " + name);
+
+      return name.equals("print") ||
+             name.equals("line") ||     // NB: Covers "Line" and "Line Input"
+             name.equals("circle") ||
+             name.equals("pset") ||
+             name.equals("point") ||
+             //name.equals("write") ||
+             //name.equals("read") ||
+             name.equals("scale") ||
+             //name.equals("input") ||
+             name.equals("seek");
+  }
+
+  private boolean isIdentifier(String identifier)
+  {
+      return isIdentifier(identifier, 1);
+  }
+
+  private boolean isIdentifier(String identifier, int token)
+  {
+      Token t = getToken(token);
+      return t.kind == IDENTIFIER && t.image.equalsIgnoreCase(identifier);
+  }
+
+  /**
+  **    VB provides a Name statement of the form:
+  **        Name <File> As <NewName>
+  **    This requires special processing, but I have not used the "isSpecialMethod"
+  **    trick above, as "Name" is too frequently used as a method / property name.
+  **    This method attempts to distinguish the two cases.
+  */
+
+  private boolean isNameStatement()
+  {
+      // Look for <Name> Expr1 <As> Expr2
+
+      if (!isIdentifier("Name"))
+        return false;
+
+      // Next token must be preceded by a space, .i.e do not allow
+      //    Name.Method As:=12
+      if (getToken(2).specialToken == null)
+        return false;
+
+
+      // Look forwards for an "As" token (until end of line).
+      for (int i = 2; ; i++)
+      {
+          Token t = getToken(i);
+          if (t.kind == EOF || t.kind == EOL)
+            return false;
+          if (t.kind == AS)
+          {
+            // Must be preceded and followed by white space.
+            if (t.specialToken != null && getToken(i + 1).specialToken != null)
+                return true;
+          }
+      }
+  }
+
+
+  private void getAnyToken() throws ParseException
+  {
+      getNextToken();
+  }
+
+    private void skipToEndSection()
+    {
+        while (true)
+        {
+            Token tok = getToken(1);
+
+            if (tok.kind == EOF)
+                break;
+
+            if (tok.kind == END && tok.specialToken == null)
+            {
+                // Found a line starting with word END. Skip
+                // this line as well, and we should be in business.
+
+                  while (getToken(1).kind != EOL)
+                  {
+                      getNextToken();
+                  }
+
+                break;
+            }
+
+            getNextToken();
+        }
+    }
+
+    private void skipToBegin()
+    {
+        while (true)
+        {
+            Token tok = getToken(1);
+
+            if (tok.kind == EOF)
+                break;
+
+            if (tok.kind == IDENTIFIER && tok.specialToken == null && tok.image.equalsIgnoreCase("BEGIN"))
+            {
+                // Found a line starting with word BEGIN.
+
+                return;
+            }
+
+            getNextToken();
+        }
+    }
+
+
+    private boolean attemptErrorRecovery = false;
+    public boolean getAttemptErrorRecovery()
+    {
+        return attemptErrorRecovery;
+    }
+    public void setAttemptErrorRecovery(boolean val)
+    {
+        attemptErrorRecovery = val;
+    }
+
+    private void handleParseError(ParseException e) throws ParseException
+    {
+       System.out.println("========================================================================================");
+       System.out.println("Error at line " + getToken(1).beginLine + ": " + getToken(1).image );
+       System.out.println("Statement not recognised");
+       e.printStackTrace();
+       error_skiptobefore(EOL);
+    }
+
+  public static void main(String args[]) throws Exception {
+    VBParser parser;
+    SimpleNode node;
+
+    if (args.length == 1) {
+      System.out.println("VB Parser:  Reading from file " + args[0] + " . . .");
+      try {
+        parser = new VBParser(new FileInputStream(args[0]));
+      } catch (FileNotFoundException e) {
+        System.out.println("VB Parser:  File " + args[0] + " not found.");
+        return;
+      }
+    }
+    else
+    {
+      throw new ParseException("VB Parser:  Usage is \"java VBParser inputfile outputfile\"");
+    }
+
+    try {
+      parser.setAttemptErrorRecovery(true);
+      node = parser.CompilationUnit(false);
+      //node = (SimpleNode)(parser.ExprTest());
+//      PrintWriter ostr = new PrintWriter(new FileWriter(args[1]));
+
+//    node.jjtAccept(new VBErrHandlerVisitor(), null);
+
+      node.dump(">");
+
+      System.out.println(node.allText(true));
+      System.out.println("VBParser:  Parsing completed successfully.");
+    } catch (ParseException e) {
+      System.out.println("VBParser:  Encountered errors during parse.");
+      System.out.println(e);
+      e.printStackTrace();
+    }
+  }
+
+}
+
+PARSER_END(VBParser)
+
+TOKEN_MGR_DECLS :
+{
+    /**
+    **  VB can have line numbers, e.g.
+    **      10 Dim X as Integer
+    **      20 X = 10
+    */
+    static String currentLineNumberLabel = "";
+
+    /*
+    **  Add any VB line number to each token on that line.
+    */
+    static void CommonTokenAction(Token t)
+    {
+        t.currentLineNumberLabel = currentLineNumberLabel;
+    }
+
+}
+
+SPECIAL_TOKEN : /* WHITE SPACE */
+{
+    <SPACE: ( " " | "\t" | "\r" | "\f" | " _\r\n" )+ >
+}
+
+
+<DEFAULT, END_OF_COMMENT> TOKEN :
+{
+   < EOL: "\n" >
+            {
+                currentLineNumberLabel = null;
+            }
+        : START_OF_LINE
+}
+
+
+/*
+**  Strip out any labels in the Lexer. This avoids major complications in
+**  the parser. For example we would need to cater for statements labels
+**  *within* compound statements:
+**      For i = 1 To 5
+**          Debug.Print i
+**      Lbl1: Next i
+**  This complicates the grammar and has quite an effect on the lookahead
+**  required. Instead we treat labels as a type of statement.
+*/
+<START_OF_LINE> SPECIAL_TOKEN :
+{
+   <LEADING_SPACE: ( " " | "\t" | "\r" | "\f" | " _\r\n" )+ >
+ | <LINE_NUMBER: (["0"-"9"])+ >
+        { currentLineNumberLabel = image.toString(); }
+ | <BLANK_LINE: "\n">
+}
+
+<START_OF_LINE> TOKEN :
+{
+   <STATEMENT_LABEL: ["A"-"Z"] (["A"-"Z"] | "_" | ["0"-"9"])+ ":">
+        {
+            // Exclude the ":" from the label token.
+            input_stream.backup(1);
+            matchedToken.image = matchedToken.image.substring(0, matchedToken.image.length()-1);
+        }
+    : DEFAULT
+}
+
+ /* Compiler Directives */
+
+<START_OF_LINE> MORE :
+{
+  < COMP_CONST: "#Const" > : DIRECTIVE_IGNORE
+| < COND_IF: "#If" > : DIRECTIVE_IGNORE         // We parse the "Then" part of the conditional code, not the else / ElseIf
+| < COND_END_IF: "#End If" >
+}
+
+
+<START_OF_LINE> MORE :
+{
+  < COND_ELSE: "#Else" > : DIRECTIVE_SKIP       // Ignore the following code
+| < COND_ELSEIF: "#ElseIf" > : DIRECTIVE_SKIP
+}
+
+<START_OF_LINE> MORE :
+{
+   < "" > : DEFAULT
+}
+
+<DIRECTIVE_IGNORE> SPECIAL_TOKEN :
+{
+  < "\n" > : START_OF_LINE
+}
+
+<DIRECTIVE_IGNORE> MORE :
+{
+  < ~[] >
+}
+
+<DIRECTIVE_SKIP> MORE :
+{
+  < "#End If" > : DIRECTIVE_IGNORE
+| < ~[] >
+}
+
+
+
+
+MORE : /* COMMENTS */
+{
+  "'" : WITHIN_COMMENT
+}
+
+<WITHIN_COMMENT> MORE :
+{
+    // The VB line continuation character ("_") can be used to continue comments
+    // over more than one line, as in
+    //      '  This is a _
+    //         multi-line comment.
+    // The following checks for this.
+
+    < (~["\n"])* " _" ("\r")? "\n" >
+}
+
+<WITHIN_COMMENT> SPECIAL_TOKEN :
+{
+    < "\n" >
+        {
+            // Exclude "\n"
+            input_stream.backup(1);
+            matchedToken.image = matchedToken.image.substring(0, matchedToken.image.length()-1);
+        }
+        : END_OF_COMMENT
+}
+
+
+<WITHIN_COMMENT> MORE :
+{
+    < ~[] >
+}
+
+
+MORE :  // The REM "statement" -- really just a comment
+{
+    <REM_COMMENT: <REM> <SPACE> > : WITHIN_COMMENT
+            // Strictly speaking, does not cater for "REM\n", but we know VB
+            // will use \r\n for line terminators. And who uses REMs nowadays...
+}
+
+/* Strings */
+
+MORE :
+{
+  "\"" : WITHIN_STRING
+}
+
+<WITHIN_STRING> MORE :
+{
+  <"\"\""> : WITHIN_STRING
+}
+
+
+<WITHIN_STRING> TOKEN :
+{
+  < UNTERMINATED_STRING_LITERAL:  "\n" > : DEFAULT
+}
+
+<WITHIN_STRING> TOKEN :
+{
+  < STRING_LITERAL: "\"" > : DEFAULT
+}
+
+<WITHIN_STRING> MORE :
+{
+  < ( ~[] ) >
+}
+
+
+
+TOKEN : /* RESERVED WORDS AND LITERALS */
+{
+
+  < ADDRESSOF: "AddressOf" >
+| < AND: "And" >
+| < AS: "As" >
+| < BYREF: "ByRef" >
+| < BYVAL: "ByVal" >
+| < CALL: "Call" >
+| < CASE: "Case" >
+| < CONST: "Const" >
+| < DEBUG_PRINT: "Debug.Print" >
+| < DEBUG_ASSERT: "Debug.Assert" >
+| < DECLARE: "Declare" >
+| < DEFMODE: ( "DefBool" | "DefByte" | "DefInt" | "DefLng" | "DefCur" | "DefSng" | "DefDbl" | "DefDec" | "DefDate" | "DefStr" | "DefObj" | "DefVar" ) >
+| < DIM: "Dim" >
+| < DO: "Do" >
+| < EACH: "Each" >
+| < ELSE: "else" >
+| < ELSEIF: "ElseIf" >
+| < END: "End" >
+| < ENDPROPERTY: "EndProperty" >
+| < ENUM: "Enum" >
+| < EQV: "Eqv" >
+| < EVENT: "Event">
+| < EXIT: "Exit" >
+| < FALSE: "false" >
+| < FOR: "for" >
+| < FRIEND: "Friend" >
+| < FUNCTION: "Function" >
+| < GET: "Get" >
+| < GLOBAL: "Global" >
+| < GOTO: "Goto" >
+| < IF: "If" >
+| < IMP: "Imp" >
+| < IMPLEMENTS: "implements" >
+| < IN: "In" >
+| < IS: "Is" >
+| < LIB: "Lib" >
+| < LIKE: "Like" >
+| < LET: "Let" >
+| < LOCK: "Lock" >
+| < LOOP: "Loop" >
+| < MOD: "Mod" >
+| < NEW: "New" >
+| < NEXT: "Next" >
+| < NOT: "Not" >
+| < ON: "On" >
+| < OPEN: "Open" >
+| < OPTION: "Option" >
+| < OPTIONAL: "Optional" >
+| < OR: "Or" >
+| < PARAMARRAY: "ParamArray" >
+| < PRESERVE: "Preserve" >
+| < PRIVATE: "private" >
+| < PROPERTY: "Property" >
+| < PROTECTED: "Protected" >
+| < PUBLIC: "Public" >
+| < PUT: "Put" >
+| < REM: "Rem" >
+| < REDIM: "ReDim" >
+| < RESUME: "Resume" >
+| < SELECT: "Select" >
+| < SET: "Set" >
+| < SHARED: "Shared" >
+| < SHORT: "short" >
+| < STATIC: "static" >
+| < STEP: "Step" >
+| < SUB: "Sub" >
+| < THEN: "Then" >
+| < TO: "To" >
+| < TRUE: "true" >
+| < TYPE: "Type" >
+| < TYPEOF: "TypeOf" >
+| < UNTIL: "Until" >
+| < WEND: "Wend" >
+| < WHILE: "while" >
+| < WITH: "With" >
+| < WITHEVENTS: "WithEvents" >
+| < XOR: "Xor" >
+}
+
+
+TOKEN : /* LITERALS */
+{
+  < INTEGER_LITERAL:
+        <DECIMAL_LITERAL>
+      | <HEX_LITERAL>
+      | <OCTAL_LITERAL>
+  >
+|
+  < LONG_LITERAL:
+        <DECIMAL_LITERAL> "&"
+      | <HEX_LITERAL> "&" >
+|
+  < #DECIMAL_LITERAL: (["0"-"9"])+ >
+|
+  < #HEX_LITERAL: "&" "H" <HEX_DIGITS> >
+|
+  < #HEX_DIGITS: (["0"-"9","a"-"f"])+ >
+|
+  < #OCTAL_LITERAL: "&" ["o"] (["0"-"7"])+ >
+|
+  < FLOATING_POINT_LITERAL:
+      (( <DECIMAL_LITERAL> | <FRACTION> ) (<EXPONENT>)?) ( "#" | "!" | "@")?
+  >
+|
+  < #FRACTION: (<DECIMAL_LITERAL>) "." (["0"-"9"])* | "." (["0"-"9"])+ >
+|
+  < #EXPONENT: ["e","E"] (["+","-"])? (["0"-"9"])+ >
+|
+  < DATE_LITERAL: "#" ( <DATE_ONLY_LITERAL> ( " " <TIME_ONLY_LITERAL> )? | <TIME_ONLY_LITERAL>  ) "#" >
+|
+  < #DATE_ONLY_LITERAL: <DECIMAL_LITERAL> "/" <DECIMAL_LITERAL> "/" <DECIMAL_LITERAL> >
+|
+  < #TIME_ONLY_LITERAL: <DECIMAL_LITERAL> ":" <DECIMAL_LITERAL> ":" <DECIMAL_LITERAL> ( " " )+ ( "AM" | "PM" ) >
+}
+
+TOKEN : /* Special token for form items such as
+        **      ColDesigner     =   "ServiceForm.frx":007C
+        */
+{
+    < HEX_DISPLACEMENT: ":" <HEX_DIGITS> >
+}
+
+
+
+ /*
+ ** IDENTIFIERS.
+ ** Identifiers in VB are complex beasts. As well as the "normal" formats
+ ** found in Java, C etc., an identifier may be:
+ ** 1.  A normal identifier enclosed in square brackets, e.g.
+ **         [Next]
+ **     This allows VB to access externally-defined names that might break
+ **     VB's own naming rules (typically used for reserved words etc)
+ ** 2.  A normal identifier suffixed by a "type-declaration character". These
+ **     characters declare the variables type, such as Integer or Long. E.g.
+ **         Dim x$
+ **     is equivalent to
+ **         dim x As String
+ **     There is one large complication here. The "!" character is used to
+ **     define floats. This conflicts with the use of "!" as a binary operator,
+ **     such as
+ **         thing = rs!colName
+ **     This has been resolved by peeking at the character following the "!". If
+ **     it is not a letter or a "[" it is assumed to be a binary operator. In this
+ **     case the character is removed from the token and put back on the input stream.
+ */
+TOKEN :
+{
+  < IDENTIFIER: ( <PLAIN_IDENTIFIER> | <DELIMITED_IDENTIFIER> ) >
+        {
+            char ch = matchedToken.image.charAt(matchedToken.image.length() -1);
+            if (ch == '!')
+            {
+                try
+                {
+                    // Peek at the next character.
+                    char nextCh = input_stream.readChar();
+                    input_stream.backup(1);
+
+                    if (nextCh == '[' || nextCh == '_' || Character.isLetter(nextCh))
+                    {
+                        // The "!" was NOT part of the identifier. Rather it was a binary
+                        // operator such as x = rs!colName.
+                        // Put the "!" back on the input stream
+                        input_stream.backup(1);
+                        // And remove it from the token
+                        matchedToken.image = matchedToken.image.substring(0, matchedToken.image.length()-1);
+                    }
+                }
+                catch (IOException e)
+                {
+                    throw new Error(e.toString());
+                }
+            }
+            //System.out.println("IDENT: " + matchedToken.image);
+        }
+
+|
+  < #PLAIN_IDENTIFIER: <LETTER> (<LETTER>|<DIGIT>)*  ( <IDENT_SUFFIX> )? >
+|
+  < #DELIMITED_IDENTIFIER: "[" <PLAIN_IDENTIFIER> "]" >
+|
+  < #LETTER: [ "A"-"Z", "_", "Ç", "Á", "À", "Ã", "Â", "É", "Ê", "Í", "Ô", "Ó",
+"Õ", "Û", "Ú", "Ü", "Ñ"] >
+|
+  < #DIGIT:  [ "0"-"9" ] >
+|
+  < #IDENT_SUFFIX: [ "%" , "#", "$", "&" , "!" ] >
+  //< #IDENT_SUFFIX: [ "%" , "#", "$", "&", "!" ] <SPACE> >
+}
+
+TOKEN : /* SEPARATORS */
+{
+  < LPAREN: "(" >
+| < RPAREN: ")" >
+| < LBRACE: "{" >
+| < RBRACE: "}" >
+| < LBRACKET: "[" >
+| < RBRACKET: "]" >
+| < SEMICOLON: ";" >
+| < COMMA: "," >
+| < HASH: "#" >
+| < DOT: "." >
+| < DOLLAR: "$" >
+}
+
+TOKEN : /* OPERATORS */
+{
+  < ASSIGN: "=" >
+| < GT: ">" >
+| < LT: "<" >
+| < BANG: "!" >
+| < TILDE: "~" >
+| < HOOK: "?" >
+| < COLON: ":" >
+| < LE: "<=" >
+| < GE: ">=" >
+| < NE: "<>" >
+| < PLUS: "+" >
+| < MINUS: "-" >
+| < STAR: "*" >
+| < SLASH: "/" >
+| < BIT_AND: "&" >
+| < PERCENT: "%" >
+| < BACKSLASH : "\\" >
+| < EXPO: "^" >
+}
+
+// Prevent lexer-generated errors if unexpected character.
+TOKEN :
+{
+    < ANYTHING_ELSE: ( ~[] ) >
+}
+
+/*****************************************
+ * THE VB LANGUAGE GRAMMAR STARTS HERE *
+ *****************************************/
+
+/*
+ * Program structuring syntax follows.
+ */
+
+/*
+**  NB: There is also a no-argument version of CompilationUnit defined above.
+*/
+
+ASTCompilationUnit CompilationUnit(boolean includeProlog) #CompilationUnit :
+{}
+{
+  [ LOOKAHEAD({isIdentifier("VERSION")}) <IDENTIFIER> Prolog(includeProlog) ]
+  ( LOOKAHEAD(4) ModuleLevelStatements() )*
+  ( ProcDeclaration() (<EOL>)+ )*
+  <EOF>
+        {
+          return jjtThis;
+        }
+}
+
+/**
+**  VB files start with a prolog (invisible to a user in the IDE). If includeProlog is set to
+**  true we will parse it, generating ASTFormItems.
+*/
+
+
+void Prolog(boolean includeProlog) :
+{}
+{
+    LOOKAHEAD( {includeProlog} )
+    (
+        { skipToBegin(); }
+
+        FormItem()
+    )
+
+    |
+
+    (
+        { skipToEndSection(); }
+    )
+}
+
+/*
+**  Recursively read the Form items.
+*/
+void FormItem() #FormItem :
+{}
+{
+    LOOKAHEAD( <IDENTIFIER>, { getToken(1).image.equalsIgnoreCase("BEGIN") } ) (
+        // Cannot use the following - it screws up lookahead somehow...
+        //Identifier("BEGIN") TypeName() Name() Eol()
+
+        <IDENTIFIER> [ TypeName() Name() ] Eol()
+        ( FormItem() ) *
+        <END> Eol()
+    )
+  | LOOKAHEAD( <IDENTIFIER>, { getToken(1).image.equalsIgnoreCase("BEGINPROPERTY") } ) (
+        <IDENTIFIER> PrimaryExpression() [ Guid() ] Eol()
+        ( FormItem() ) *
+        <ENDPROPERTY> Eol()
+    )
+  | (
+        ( PrimaryExpression() | <TYPE> ) "=" [ "-" | "$" | "^" ] [ Literal() | <IDENTIFIER> ] [ <HEX_DISPLACEMENT> ] Eol()
+    )
+}
+
+void Guid() :
+{}
+{
+    "{" GuidValue() "}"
+}
+
+
+/*
+**  Guids have strange values, such as {CB292D44-A0D9-3E99-9C14-43DE7F88A3AD}. We do not attempt to parse
+**  all of it.
+*/
+
+JAVACODE
+void GuidValue()
+{
+    while (!getToken(1).image.equals("}"))
+        getNextToken();
+}
+
+
+
+
+
+// ==============================================================================================================================
+/**
+**  The following are all statements that can appear at the module level,
+**  i.e outside of subs etc.
+**  YOU MAY WANT TO SKIP OVER THESE.
+*/
+
+void ModuleLevelStatements() :
+{}
+{
+    OptionStatement() Eos()
+  | ImplementsDecl() Eos()
+  | DefModeStatement()
+  | LOOKAHEAD(2) TypeDeclaration() Eos()
+  | LOOKAHEAD(2) EventDeclaration() Eos()
+  | LOOKAHEAD(2) ConstDeclaration() Eos()
+  | LOOKAHEAD(2) EnumDeclaration() Eos()
+  | LOOKAHEAD(2) DeclareStatement() Eos()
+  | ModLevelDeclaration() Eos()
+  | LOOKAHEAD({isIdentifier("Attribute")}) <IDENTIFIER> PrimaryExpression() "=" Expression() ( "," Expression() )* Eos()
+  | Eol()
+}
+
+void OptionStatement() #Option :
+{}
+{
+    <OPTION> ( AnyName() | Literal() | <PRIVATE> )+
+}
+
+void ModLevelDeclaration() #Declaration :
+{}
+{
+    ModScopeDecl() VariableDeclaration() ( "," VariableDeclaration() )*
+}
+
+void EventDeclaration() #EventDeclaration :
+{}
+{
+    [ ModScopeDecl() ] <EVENT> Name() [ "(" FormalParamList() ")" ]
+}
+
+void TypeDeclaration() #TypeDeclaration :
+{}
+{
+    [ ModScopeDecl() ] <TYPE> Name() Eos()
+        ( LOOKAHEAD(2) [ AnyVariableDeclaration() ] Eos())+
+    <END> <TYPE>
+}
+
+void EnumDeclaration() #EnumDeclaration :
+{}
+{
+    [ ModScopeDecl() ] <ENUM> Name() Eos()
+        ( [ Name() [ "=" Expression() ] ] Eos())+
+    <END> <ENUM>
+}
+
+void DefModeStatement() #Statement :
+{}
+{
+    <DEFMODE> <IDENTIFIER> "-" <IDENTIFIER> ( "," <IDENTIFIER> "-" <IDENTIFIER> )*
+}
+
+void ImplementsDecl() #Implements :
+{}
+{
+    <IMPLEMENTS> TypeName()
+}
+
+void ModScopeDecl() :
+{}
+{
+    [ <STATIC> ] ( <PUBLIC> | <PRIVATE> | <FRIEND> | <DIM> | <GLOBAL> ) [ <STATIC> ]
+}
+
+
+// ==============================================================================================================================
+/**
+**  The following are top-level productions for Subs, Functions and Properties
+*/
+
+ASTProcDeclaration ProcDeclaration() #ProcDeclaration :
+{}
+{
+    (
+        LOOKAHEAD(3) SubDeclaration()       { jjtThis.setProcType(SUB); }
+      | LOOKAHEAD(3) FunctionDeclaration()  { jjtThis.setProcType(FUNCTION); }
+      | LOOKAHEAD(4) PropertyDeclaration()  { jjtThis.setProcType(PROPERTY); }
+    )
+
+        {
+          return jjtThis;
+        }
+}
+
+void SubDeclaration() :
+{}
+{
+    [ ModScopeDecl() ] <SUB> Name() [ "(" FormalParamList() ")" ] Eos()
+    Statements()
+    <END> <SUB>
+}
+
+void FunctionDeclaration() :
+{}
+{
+    [ ModScopeDecl() ] <FUNCTION> Name() [ "(" FormalParamList() ")" ] [ <AS> TypeName() [ "(" ")" ] ] Eos()
+    Statements()
+    <END> <FUNCTION>
+}
+
+void PropertyDeclaration() :
+{}
+{
+    LOOKAHEAD(3) PropertyGetDeclaration()
+  | LOOKAHEAD(3) PropertyLetDeclaration()
+  | LOOKAHEAD(3) PropertySetDeclaration()
+}
+
+void PropertyGetDeclaration() :
+{}
+{
+    [ ModScopeDecl() ] <PROPERTY> <GET> Name() [ "(" FormalParamList() ")" ] [ <AS> TypeName() [ "(" ")" ] ] Eos()
+    Statements()
+    <END> ( <PROPERTY> | <FUNCTION> )
+}
+
+void PropertyLetDeclaration() :
+{}
+{
+    [ ModScopeDecl() ] <PROPERTY> <LET> Name() [ "(" FormalParamList() ")" ] Eos()
+    Statements()
+    <END> <PROPERTY>
+}
+
+void PropertySetDeclaration() :
+{}
+{
+    [ ModScopeDecl() ] <PROPERTY> <SET> Name() [ "(" FormalParamList() ")" ] Eos()
+    Statements()
+    <END> <PROPERTY>
+}
+
+void FormalParamList() #FormalParamList :
+{}
+{
+    [ ParamSpec() ( "," ParamSpec() )* ]
+}
+
+void ParamSpec() #ParamSpec :
+{}
+{
+    [ LOOKAHEAD(1) <OPTIONAL> { jjtThis.setOptional(true); } ]
+    ( <BYVAL> { jjtThis.setByVal(true); } | <BYREF> { jjtThis.setByRef(true); } )?
+    [ <PARAMARRAY> { jjtThis.setParamArray(true); }]
+    AnyName() [ "(" ")" ]
+    [ <AS> TypeName() [ "*" Expression() ] ]
+    [ "=" Expression() ]
+}
+
+
+// ==============================================================================================================================
+/**
+**  The following are the productions for the procedure-level statements.
+*/
+
+    /*
+    **  The Statements production has been changed from
+    **      ( Statement() )*
+    **  to
+    **      ( LOOKAHEAD(0, {!isEndBlock()) Statement() )*
+    **  This eliminates problems I had with nested semantic / syntactic lookahead
+    **  and also makes it easier to provide error recovery.
+    **
+    **
+    **
+    **
+    **  Most of VB's syntax is fairly simple, and similar to the syntax for C, Pascal
+    **  etc. However there are a few legacy statements that have a more COBOL-like syntax, e.g.:
+    **      Open pathname For mode [Access access] [lock] As [#]filenumber [Len=reclength]
+    **      object.Line [Step] (x1, y1) [Step] - (x2, y2), [color], [B][F]
+    **      Name oldpathname As newpathname
+    **  These legacy statements complicate the parsing process. Worse, they complicate
+    **  the parsing of the simple statements since complex lookahead is required to
+    **  determine that a statement is NOT a legacy statement. For example, compare statements:
+    **
+    **      SomeObject.SomeFunction("Param1", 2 + 3).Line (SomeOtherFunc(VarName) + 1) * 2
+    **      SomeObject.SomeFunction("Param1", 2 + 3).Line (SomeOtherFunc(VarName), 12) - (24, 48)
+    **                                                                           ^^^^^^^^^^^^^^^^
+    **  The first statement is a simple call of a method called "Line".
+    **  The second statement is the legacy "Line" statement.
+    **  The parser does not know it is processing a legacy statement until it hits the
+    **  comma token as marked by the arrows.
+    **
+    **  To localise the complexities I use the following scheme:
+    **
+    **      Save the state of the token stream.
+    **      First attempt to parse the statement as a "simple" statement.
+    **      If a ParseException occurs
+    **          Reset the token stream to its saved value.
+    **          Attempt to parse as a Special (legacy) statement.
+    **
+    **  This is a type of parser backtracking (as opposed to Lookahead backtracking).
+    */
+
+ASTStatements Statements() #Statements :
+{
+    Token startToken;
+    int originalArity;
+}
+{
+    (LOOKAHEAD(0, {!isEndBlock()})
+
+            // Record the position of the last token consumed, and the depth of JJTree's
+            // stack, in case we have to backtrack to parse a SpecialStatement.
+            { startToken = getToken(0); originalArity = jjtree.nodeArity(); }
+
+            try
+            {
+                ( Eos() | LOOKAHEAD(0) Statement() Eos() )
+            }
+            catch (ParseException e)
+            {
+                try
+                {
+                    // Attempt special case processing
+
+                    // First reset the tokens back to the start of the statement.
+                    jj_ntk = -1;
+                    token = startToken;
+
+                    // An ASTStatement node may have been pushed on JJTree's stack (depending
+                    // on if the Statement() or Eos() call failed).
+
+                    while (jjtree.nodeArity() > originalArity)
+                        jjtree.popNode();
+
+                    SpecialStatement();
+                    Eos();
+                }
+                catch (ParseException failedSpecial)
+                {
+
+                  if (!attemptErrorRecovery)
+                       throw(e);
+
+
+                  Token t = getToken(1);
+
+                  handleParseError(failedSpecial);
+
+                  ASTUnrecognisedStatement urs = new ASTUnrecognisedStatement(JJTUNRECOGNISEDSTATEMENT);
+                  urs.setFirstToken(t);
+                  urs.setLastToken(getToken(0));
+
+                  jjtree.pushNode(urs);
+                }
+            }
+
+    )*
+
+        {
+          return jjtThis;
+        }
+}
+
+// A dummy production to force JJTree to generate a ASTUnrecognisedStatement.
+void Dummy1() #UnrecognisedStatement :
+{}
+{
+    "."
+}
+
+
+ASTStatement Statement() :
+{}
+{
+      (
+        LabelStatement()
+      | DebugStatement()
+      | LOOKAHEAD(IsEndStatement()) EndStatement()
+      | ( LOOKAHEAD({isIdentifier("Attribute")}) <IDENTIFIER> PrimaryExpression() "=" Expression() ) #Statement
+      | LOOKAHEAD(2) ProcLevelDeclaration()
+      | LOOKAHEAD(2) DeclareStatement()
+      | LOOKAHEAD(2) ConstDeclaration()
+      | Let()
+      | Set()
+      | OnErrorStatement()
+      | GotoStatement()
+      | IfStatement()
+      | DoWhile()
+      | WhileWend()
+      | CallStatement()
+      | ExitStatement()
+      | LOOKAHEAD(2) ForEachStatement()
+      | ForStatement()
+      | WithStatement()
+      | ResumeStatement()
+      | CaseStatement()
+      | RedimStatement()
+      | PrimaryExprStatement(false)
+      )
+
+        {
+               ASTStatement s = (ASTStatement)(jjtree.peekNode());
+               if (s.begin != null)
+               {
+
+                   s.setLineNumber(s.begin.currentLineNumberLabel);
+               }
+
+               return s;
+       }
+}
+
+
+ASTStatement SpecialStatement() :
+{}
+{
+      (
+        LOOKAHEAD( {isNameStatement()} ) NameStatement()
+      | OpenStatement()
+      | LOOKAHEAD({isIdentifier("Close")}) CloseStatement()
+      | LOOKAHEAD({isIdentifier("Line") && isIdentifier("Input", 2)}) LineInputStatement()
+      | GetStatement()
+      | PutStatement()
+      | PrimaryExprStatement(true)
+      )
+
+        {
+               ASTStatement s = (ASTStatement)(jjtree.peekNode());
+               if (s.begin != null)
+               {
+
+                   s.setLineNumber(s.begin.currentLineNumberLabel);
+               }
+
+               return s;
+       }
+}
+
+// This production must be specified in this weird format so that
+// we do not have to use LOOKAHEAD (which would mess up the semantic
+// lookahead in "PrimaryExpression()"
+// This seems to be a restriction in JavaCC.
+
+void PrimaryExprStatement(boolean allowSpecialCases) :
+{
+    Token firstToken = getToken(1);
+    boolean isSpecial = false;
+}
+{
+        PrimaryExpression()     { isSpecial = isSpecialMethod(getToken(0).image); }
+        (   "=" Expression()    #Assignment(2)
+          | LOOKAHEAD({allowSpecialCases && isSpecialMethod(getToken(0).image)})
+                skipToEoln()    #MethodCall(1)
+          | ArgList()           #MethodCall(2)
+        )
+
+    {
+        SimpleNode sn = (SimpleNode)(jjtree.peekNode());
+        sn.begin = firstToken;
+        sn.end = getToken(0);
+    }
+}
+
+void LabelStatement() #Label :
+{}
+{
+    <STATEMENT_LABEL>
+}
+
+
+void DebugStatement() #Statement :
+{}
+{
+    ( <DEBUG_PRINT> | <DEBUG_ASSERT> ) skipToEoln()
+}
+
+void EndStatement() #Statement :
+{}
+{
+    <END>
+}
+
+// For LOOKAHEAD only
+void IsEndStatement() :
+{}
+{
+    <END> <EOL>
+}
+
+
+void ProcLevelDeclaration() #Declaration :
+{}
+{
+    ProcScopeDecl() AnyVariableDeclaration() ( "," AnyVariableDeclaration() )*
+}
+
+void ProcScopeDecl() :
+{}
+{
+    ( < STATIC > | <DIM> )
+}
+
+void VariableDeclaration() #VarDecl :
+{}
+{
+    [ <WITHEVENTS> ] Name() [ "(" [ VariableDimensions() ] ")" ]
+        [ <AS> AsTypeClause() ] [ "*" (Literal() | AnyName() ) ]
+}
+
+void AnyVariableDeclaration() #VarDecl :
+{}
+{
+    AnyName() [ "(" [ VariableDimensions() ] ")" ]
+        [ <AS> AsTypeClause() ] [ "*" (Literal() | AnyName()) ]
+}
+
+void AsTypeClause() :
+{}
+{
+    LOOKAHEAD(1) ( <NEW> TypeName() { jjtThis.op = "New"; } ) # UnaryOp(1)
+                 | TypeName()
+}
+
+void VariableDimensions() :
+{}
+{
+    VariableDimension() ( "," VariableDimension() )*
+}
+
+void VariableDimension() #VarDim :
+{}
+{
+    Expression() [ <TO> Expression() ]
+}
+
+void RedimStatement() #ReDim :
+{}
+{
+    <REDIM> [ <PRESERVE> ] RedimClause() ( "," RedimClause() )*
+}
+
+void RedimClause() :
+{}
+{
+    //Name() "(" VariableDimensions() ")"
+    PrimaryExpression()
+    [ <AS> AsTypeClause() ] [ "*" Literal() ]
+}
+
+
+void DeclareStatement() #Declare :
+{}
+{
+    [ ModScopeDecl() ] <DECLARE> ( <SUB> | <FUNCTION> ) Name() <LIB> Literal()
+        [ LOOKAHEAD({isIdentifier("Alias")})  <IDENTIFIER> Literal() ]
+        [ "(" FormalParamList() ")" ]
+        [ <AS> Name() [ "(" ")" ] ]
+}
+
+void ConstDeclaration() #ConstDeclaration :
+{}
+{
+    [ ModScopeDecl() ] <CONST> ConstSpec() ( "," ConstSpec() )*
+}
+
+void ConstSpec() :
+{}
+{
+    Name() [ <AS> Name() [ "*" (Literal() | AnyName() ) ] ] "=" Expression()
+}
+
+
+void Set() #SetStatement :
+{}
+{
+    <SET> PrimaryExpression() "=" Expression()
+}
+
+void Let() #Assignment :
+{}
+{
+    <LET> PrimaryExpression() "=" Expression()
+}
+
+void OnErrorStatement() #OnError :
+{
+}
+{
+    //<ON> [ LOOKAHEAD({!isIdentifier("Error")}) <IDENTIFIER> ] <IDENTIFIER> ( <RESUME> [ <NEXT> ] | <GOTO> (Name() | Literal() ) )
+    <ON> <IDENTIFIER> [ <IDENTIFIER> ] ( <RESUME> [ <NEXT> ] | <GOTO> (Name() | Literal() ) )
+}
+
+void GotoStatement() #Statement :
+{}
+{
+    <GOTO> (Name() | <INTEGER_LITERAL>)
+}
+
+void IfStatement() #IfStatement :
+{}
+{
+    <IF> Expression() <THEN>
+    (
+        Eol() MultilineIf()
+      | [ ":" ] InlineIf()
+    )
+}
+
+void InlineIf() :
+{}
+{
+    Statement() ( LOOKAHEAD(1) ":" [Statement()] )* [ LOOKAHEAD(1) <ELSE> Statement() ( LOOKAHEAD(1) ":" [Statement()] )* ]
+}
+
+void MultilineIf() :
+{}
+{
+        Statements()
+    ( <ELSEIF> Expression() <THEN> Eos()
+        Statements()
+    )*
+    [ <ELSE> Eos()
+        Statements() ]
+    <END> <IF>
+}
+
+void DoWhile() #DoWhileStatement :
+{}
+{
+    <DO> [ DoCondition() ] Eos()
+        Statements()
+    <LOOP> [ DoCondition() ]
+}
+
+void DoCondition() #DoCondition :
+{}
+{
+    (    <WHILE> { jjtThis.conditionWhile = true; }
+       | <UNTIL> { jjtThis.conditionWhile = false; }
+    ) Condition()
+}
+
+void WhileWend() #WhileWendStatement :
+{}
+{
+    <WHILE> Condition() Eos()
+        Statements()
+    <WEND>
+}
+
+void ForEachStatement() #ForEachStatement :
+{}
+{
+    <FOR> <EACH> Name() <IN> Expression() Eos()
+        Statements()
+    <NEXT> [ Name() ]
+}
+
+void ForStatement() #ForStatement :
+{}
+{
+    <FOR> Name() "=" Expression() <TO> Expression() [ <STEP> Expression() ] Eos()
+        Statements()
+    <NEXT> [ Name() ]
+
+}
+
+void WithStatement() # WithStatement :
+{}
+{
+    <WITH> Expression()
+    // Was "<WITH> PrimaryExpression()" -- PrimaryExpression seems more correct, but does not cater for "With New XX"
+        Statements()
+    <END> <WITH>
+}
+
+void ResumeStatement() #Statement :
+{}
+{
+    <RESUME> [ <NEXT> | Name() ]
+}
+
+
+/*
+** An oddity in the case statement. The documentation says that no statements are
+** allowed between "Select Case" and the first "Case" clause. In fact, declarations
+** ARE allowed before (any) "Case" clause.
+*/
+
+void CaseStatement() #CaseStatement :
+{}
+{
+    <SELECT> <CASE> Expression() Eos()
+      (
+          LOOKAHEAD(2) CaseClause()
+      )*
+    <END> <SELECT>
+}
+
+void CaseClause() :
+{}
+{
+    ( [ ProcLevelDeclaration() ] Eos() )*
+    <CASE> CaseExprList()
+    Statements()
+}
+
+void CaseExprList() :
+{}
+{
+    CaseExpr() ( "," CaseExpr() ) *
+}
+
+void CaseExpr() #CaseExpr :
+{}
+{
+    [ <IS> ] ( "<" | ">" | "<=" | ">=" | "=" | "<>" | <LIKE> ) Expression()
+  | Expression() [ <TO> Expression() ]
+  | <ELSE>
+}
+
+void CallStatement() #MethodCall :
+{}
+{
+    <CALL> PrimaryExpression() [ "(" ArgList() ")" ]
+}
+
+
+// TODO Comments. Also need tree to differ for func(x, , y),
+// func(x, y) and func(, y, z)
+
+void ArgList() #ArgList :
+{}
+{
+//  ( ( "," )* ArgSpec() )*
+//  [ ArgSpec() ( "," [ ArgSpec() ] )* ]
+    [ LOOKAHEAD(( "," )* ArgSpec()) ( "," )* ArgSpec() ] ( ( "," )+ ArgSpec() )*
+}
+
+/*
+**  TODO - The [ <TO> Expression() ] clause is used to allow
+**      redim Obj.Arr(1 To 4)
+**  It might be better to pass in a parameter specifying if we are passing
+**  a ReDim clause or a normal Expression.
+*/
+
+void ArgSpec() #ArgSpec :
+{}
+{
+    ( <BYVAL> | <BYREF> )?
+    ( LOOKAHEAD(2) NamedArg() | (UnNamedArg() [<TO> Expression()] ) )
+
+}
+
+// TODO - can have x = SomeObj.SomeMethod(Sub:=12)
+// i.e. a parameter named "Sub" (or indeed, "As", "Byval" etc).
+// Need to fix this by using a sematic LA for ":=" and a
+// JAVACODE production for NamedArg.
+void NamedArg() :
+{}
+{
+    AnyName() ":=" Expression()
+}
+
+void UnNamedArg() :
+{}
+{
+    Expression()
+}
+
+
+void ExitStatement() #ExitStatement :
+{}
+{
+    <EXIT> ( <FUNCTION> | <PROPERTY> | <SUB> | <DO> | <FOR> | <WHILE> )
+}
+
+void TypeName() #TypeName :
+{}
+{
+    AnyName() [ "." AnyName() ]
+}
+
+
+/**
+**   Name() and AnyName()
+**   ====================
+**
+** VB does not allow reserved words (such as "New") to be used
+** as identifiers. E.g. these are not valid:
+**
+**      Dim New As Integer      // INVALID
+**      Open = 66               // INVALID
+**
+** However it does permit the names of member variables/methods
+** in expressions etc to be reserved words (presumably this is because
+** an object may have been created in a language other than VB, and that
+** language may have different keywords). Therefore these are valid:
+**
+**      X = Obj.Sub.If
+**      Public Type YY
+**          Sub As Integer
+**      End
+**
+** NB: To confuse things even further, there are some keywords such as
+** "Name" which can also be used as the names of variables, e.g.
+**
+**      Name "Thing.txt" As "Thing.bak"
+**      Dim Name as String
+**      Name = "X"
+**
+** The "Name()" production lists all names that can be used directly
+** as variable, i.e. that can appear in a "Dim" statement, or can appear
+** on the RHS
+*/
+
+void Name() #Name :
+{}
+{
+    (
+        <IDENTIFIER>
+      | <PROPERTY>
+      | <STEP>
+    )
+    {
+        jjtThis.setName(getToken(0).image);
+    }
+}
+
+void AnyName() #Name(jjtree.nodeArity() == 0):
+{}
+{
+    (
+        Name()
+      | <DEFMODE>
+      | <ENUM>
+      | <EVENT>
+      | <GET>
+      | <LET>
+      | <NEW>
+      | <OPEN>
+      | <OPTIONAL>
+      | <NEXT>
+      | <PUT>
+      | <SET>
+      | <TYPE>
+      | <TYPEOF>
+      | <END>
+      | <ENDPROPERTY>
+      | <REM>
+    )
+    {
+        jjtThis.setName(getToken(0).image);
+    }
+}
+
+
+// Conditions are the same as expressions.
+void
+Condition() :
+{}
+{
+    Expression()
+}
+
+
+/*
+ * Expression syntax follows.
+ */
+
+ASTExpression Expression() #Expression :
+{}
+{
+    ImpExpression()
+        {
+          return jjtThis;
+        }
+}
+
+void ImpExpression() :
+{}
+{
+    EqvExpression()
+    (
+        ( <IMP> { jjtThis.op = getToken(0).image; } EqvExpression() ) #BinOp(2)
+    )*
+}
+
+void EqvExpression() :
+{}
+{
+    XorExpression()
+    (
+        ( <EQV> { jjtThis.op = getToken(0).image; } XorExpression() ) #BinOp(2)
+    )*
+}
+
+void XorExpression() :
+{}
+{
+    OrExpression()
+    (
+        ( <XOR> { jjtThis.op = getToken(0).image; } OrExpression() ) # BinOp(2)
+    )*
+}
+
+void OrExpression() :
+{}
+{
+    AndExpression()
+    (
+        ( <OR> { jjtThis.op = getToken(0).image; } AndExpression() ) #BinOp(2)
+    )*
+}
+
+void AndExpression() :
+{}
+{
+    ComparisonOpExpression()
+    (
+        ( <AND> { jjtThis.op = getToken(0).image; } ComparisonOpExpression() ) # BinOp(2)
+    )*
+}
+
+
+void ComparisonOpExpression() :
+{}
+{
+    StringConcatExpression()
+    (
+        LOOKAHEAD(2) ( (  "=" | "<" | ">" | "<=" | ">=" | "<>" | <IS> | <LIKE> )
+            { jjtThis.op = getToken(0).image; } StringConcatExpression() ) #BinOp(2)
+    )*
+}
+
+void StringConcatExpression() :
+{}
+{
+    AdditiveExpression()
+    ( LOOKAHEAD(1)      // Tell JavaCC that we are aware of the ambiguity generated by the unary ops.
+        ( "&" { jjtThis.op = getToken(0).image; } AdditiveExpression() ) #BinOp(2)
+    )*
+}
+
+
+void AdditiveExpression() :
+{}
+{
+    MultiplicativeExpression()
+    ( LOOKAHEAD(1)      // Tell JavaCC that we are aware of the ambiguity generated by the unary ops.
+        ( ( "+" | "-" ) { jjtThis.op = getToken(0).image; } MultiplicativeExpression() ) #BinOp(2)
+    )*
+}
+
+void MultiplicativeExpression() :
+{}
+{
+    ExpoExpression()
+    ( LOOKAHEAD(1)      // Tell JavaCC that we are aware of the ambiguity generated by the unary ops.
+        (( "*" | "/" | "\\" | <MOD> ) { jjtThis.op = getToken(0).image; } ExpoExpression() ) #BinOp(2)
+    ) *
+}
+
+void ExpoExpression() :
+{}
+{
+    DotOpExpression()
+    ( LOOKAHEAD(1)
+        ( ( "^" ) { jjtThis.op = getToken(0).image; } DotOpExpression() ) #BinOp(2)
+    )*
+}
+
+
+void DotOpExpression() :
+{}
+{
+    UnaryOps()
+    ( LOOKAHEAD(1)
+      (
+          "." { jjtThis.op = getToken(0).image; } DotOperand()
+        | "!" { jjtThis.op = getToken(0).image; } BangOperand()
+      ) #BinOp(2)
+     )*
+}
+
+/**
+**  NB: The argument following a "!" can be ANYTHING -- !X is treated as
+**  .Item("X")
+*/
+JAVACODE
+void BangOperand() #Name
+{
+    if (getToken(1).image.equals("["))
+    {
+        while (!getToken(0).image.equals("]"))
+            getNextToken();
+    }
+    else if (getToken(1).kind != EOL)
+    {
+        getAnyToken();
+    }
+    else
+        throw new ParseException("Expected operand after \"!\"");
+}
+
+void DotOperand() :
+{}
+{
+      LOOKAHEAD(2) FuncCall()
+    | AnyName()
+}
+
+void UnaryOps() :
+{}
+{
+    /*
+    ** Unary + and - have the same precedence as "*" etc, so that
+    ** "- x ^ y" is interpreted as "- (x^y)".
+    */
+
+    /*
+    ** Note that a hash sign is permitted before an ExpTerminal to cater for the VB
+    ** file IO constructs that expect hash signs, e.g.
+    ** x = Input(1, #fileno)
+    */
+
+    (
+        ( "."           { jjtThis.op = getToken(0).image; } ExpTerminal()               ) #UnaryOp(1)
+      | ( "!"           { jjtThis.op = getToken(0).image; } BangOperand()               ) #UnaryOp(1)
+      | LOOKAHEAD(1) ( <NEW>        { jjtThis.op = getToken(0).image; } UnaryOps()                  ) #UnaryOp(1)
+      | ( "+"           { jjtThis.op = getToken(0).image; } ExpoExpression()            ) #UnaryOp(1)
+      | ( "-"           { jjtThis.op = getToken(0).image; } ExpoExpression()            ) #UnaryOp(1)
+      | ( <NOT>         { jjtThis.op = getToken(0).image; } ComparisonOpExpression()    ) #UnaryOp(1)
+      | LOOKAHEAD(1) ( <TYPEOF>     { jjtThis.op = getToken(0).image; } UnaryOps()                  ) #UnaryOp(1)
+      | ( <ADDRESSOF>   { jjtThis.op = getToken(0).image; } UnaryOps()                  ) #UnaryOp(1)
+      | [ "#" ] ExpTerminal()
+    )
+}
+
+
+void ExpTerminal() :
+{}
+{
+      Literal()
+    | "(" Expression() ")"
+    | LOOKAHEAD(2) FuncCall()
+    | LOOKAHEAD(1) AnyName()
+}
+
+void FuncCall() :
+{}
+{
+    AnyName()
+    ( LOOKAHEAD(1)           // TODO LOOKAHEAD(1): Why is this ambiguous? Only happens with '( LOOKAHEAD({isIdentifier("Attribute")}) <IDENTIFIER> PrimaryExpression() "=" Expression() ) #Statement'
+        ( "(" { jjtThis.op = "()"; } ArgList() ")" ) #BinOp(2)
+    )+
+}
+
+void SpecialFuncCall() :
+{}
+{
+    // TODO
+    {System.out.println("SpecialFuncCall");}
+    skipToEoln()
+}
+
+/**
+**  A primary expression is formed from Expression Terminals (literals,
+**  function calls, variable names and parenthesized sub-expressions), all
+**  potentially linked together by the binary "." and "!" operators.
+**  E.g.
+**      Obj.SubObj.Method1
+**  or
+**      Obj.Func("Param1", 4 + 5).Value
+**  or plain
+**  MethodName
+*/
+void PrimaryExpression() #PrimaryExpression :
+{}
+{
+      ( "." | "!" ) PrimaryName() PrimarySuffix()
+    | Name() PrimarySuffix()
+}
+
+void PrimarySuffix() :
+{}
+{
+    ( LOOKAHEAD( { isBinarySuffix() } )
+        (
+            ( "." | "!" ) PrimaryName()
+            | "(" ArgList() ")"
+        )
+    ) *
+}
+
+void PrimaryName() :
+{}
+{
+      AnyName()
+    | BangOperand()     // TODO: Allows "rs.[a b]"
+}
+
+
+
+void Literal() #Literal :
+{}
+{
+  <INTEGER_LITERAL>
+|
+  <LONG_LITERAL>
+|
+  <FLOATING_POINT_LITERAL>
+|
+  <STRING_LITERAL>
+|
+  <DATE_LITERAL>
+
+|
+  "true"
+|
+  "false"
+}
+
+
+void Arguments() #Arguments :
+{}
+{
+  "(" [ ArgumentList() ] ")"
+}
+
+void ArgumentList() :
+{}
+{
+  Expression() ( "," Expression() )*
+}
+
+
+// ==============================================================================================================================
+/**
+**  The following are "oddities" in the VB language -- the "Put #" statement etc
+*/
+
+void LineInputStatement() #Statement :
+{}
+{
+    <IDENTIFIER> <IDENTIFIER>  [ LOOKAHEAD(2) "#" ] Expression() "," AnyName()
+}
+
+void GetStatement() #Statement :
+{}
+{
+    <GET> Expression() "," [ Expression() ]  [ "," Expression() ]
+}
+
+void PutStatement() #Statement :
+{}
+{
+    <PUT> Expression() "," [ Expression() ]  [ "," Expression() ]
+}
+
+void NameStatement() #Statement :
+{}
+{
+    <IDENTIFIER> Expression() <AS> Expression()
+}
+
+void OpenStatement() #Statement :
+{}
+{
+    // Open pathname For mode [Access access] [lock] As [#]filenumber [Len=reclength]
+
+    <OPEN> Expression() <FOR> <IDENTIFIER>
+        [ LOOKAHEAD({isIdentifier("Access")}) <IDENTIFIER> <IDENTIFIER> [ <IDENTIFIER> ] ]
+        [ LockClause() ]
+        <AS> Expression()
+        [ LOOKAHEAD({isIdentifier("Len")}) <IDENTIFIER> "=" Expression() ]
+}
+
+void LockClause() :
+{}
+{
+      <SHARED>
+    | <LOCK> <IDENTIFIER> [ <IDENTIFIER> ]
+}
+
+void CloseStatement() #Statement :
+{}
+{
+    <IDENTIFIER> [ FileNumberList() ]
+}
+
+void FileNumberList() :
+{}
+{
+    Expression() ( "," Expression() )*
+}
+
+
+// ==============================================================================================================================
+
+
+
+/**
+** Consume at least one End-of-line character.
+** NB: A java code loop is used here, as a convenient way to prevent
+** ambiguities involving end-of-line in other
+** statements.
+*/
+void Eol() :
+{}
+{
+    <EOL>
+    {
+        while (getToken(1).kind == EOL)
+        {
+            getNextToken();
+        }
+    }
+}
+
+void Eos() :
+{}
+{
+    Eol() | ":"
+}
+
+
+JAVACODE
+void skipToEoln()
+{
+    while (getToken(1).kind != EOL && getToken(1).kind != COLON)
+    {
+        getNextToken();
+    }
+}
+
+JAVACODE
+void Identifier(String id)
+{
+      if (!getToken(1).image.equalsIgnoreCase(id))
+        throw generateParseException();
+
+      getNextToken();
+}
+
+JAVACODE
+void error_skipto(int kind) {
+  Token t;
+  do {
+    t = getNextToken();
+  } while (t.kind != kind);
+    // The above loop consumes tokens all the way upto a token of
+    // "kind".  We use a do-while loop rather than a while because the
+    // current token is the one immediately before the erroneous token
+    // (in our case the token immediately before what should have been
+}
+
+
+// As above, but do not consume the specified token.
+JAVACODE
+void error_skiptobefore(int kind) {
+  while (getToken(1).kind != kind)
+    getNextToken();
+}
+
+// Test procedure for PrimaryExprStatement
+void TestPrimaryExprStatement() :
+{}
+{
+    Statements() <EOF>
+        {
+            ((SimpleNode)jjtree.peekNode()).dump(">");
+        }
+}
+
+JAVACODE
+void SkipSpecialFunction()
+{
+
+}
+
