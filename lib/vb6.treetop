@@ -4,31 +4,34 @@ grammar VB6
   end
 
   rule layout
-    'Begin' space 
-    
+    'Begin' layouttype identifier eol
+    (layout / property / compound_property)*
+    'End' eol
+  end
+
   rule attribute
-    'Attribute' space assignment
+    'Attribute' assignment
   end
 
   rule assignment
-    identifier space '=' space expression
+    identifier '=' expression
   end
 
   rule statement
-    command space arguments
+    command arguments
   end
 
   rule arguments
-    (expression comma space arguments / expression)
+    (expression comma arguments / expression)
   end
 
-  # Todo: Line continuation
   rule space
-    ' '+
+    (' ' / "\t" / "\r" / "\f" / " _\r\n")+
   end
 
+  # TODO: comments are also part of the eol
   rule eol
-    [\n\r]+
+    "\n" / EOF
   end
 
 end
