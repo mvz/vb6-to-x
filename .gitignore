@@ -1,3 +1,6 @@
 antlr
 javacc
+treetop-oniguruma
+tire_swing_example/
+tire_swing_example.tar.gz
 .*.swp
