@@ -1,46 +1,48 @@
-grammar VB6
-  rule vb
-    version:version?
-    layout:layout?
-    <node(:vb6)>
-  end
+module VB6ToX
+  grammar VB6
+    rule root
+      version:version?
+      layout:layout?
+      <node(:root)>
+    end
 
-  rule version
-    space? 'VERSION' space version:'5.00' full_eol <node(:versionspec)>
-  end
+    rule version
+      space? 'VERSION' space version:'5.00' full_eol <node(:version)>
+    end
 
-  rule layout
-    'Begin' layouttype identifier eol
-    (layout / property / compound_property)*
-    'End' eol
-  end
+    rule layout
+      'Begin' layouttype identifier eol
+      (layout / property / compound_property)*
+      'End' eol
+    end
 
-  rule attribute
-    'Attribute' assignment
-  end
+    rule attribute
+      'Attribute' assignment
+    end
 
-  rule assignment
-    identifier '=' expression
-  end
+    rule assignment
+      identifier '=' expression
+    end
 
-  rule statement
-    command arguments
-  end
+    rule statement
+      command arguments
+    end
 
-  rule arguments
-    (expression comma arguments / expression)
-  end
+    rule arguments
+      (expression comma arguments / expression)
+    end
 
-  rule space
-    (' ' / "\t" / "\r" / "\f" / " _\r\n")+
-  end
+    rule space
+      (' ' / "\t" / "\r" / "\f" / " _\r\n")+
+    end
 
-  rule full_eol
-    space? eol
-  end
+    rule full_eol
+      space? eol
+    end
 
-  # TODO: comments are also part of the eol
-  rule eol
-    "\n" / !.
+    # TODO: comments are also part of the eol
+    rule eol
+      "\n" / !.
+    end
   end
 end

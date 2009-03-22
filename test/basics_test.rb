@@ -1,6 +1,7 @@
 require File.dirname(__FILE__) + '/test_helper'
 
 class BasicsTest < Test::Unit::TestCase
+  include VB6ToX
   context "The VB6 parser" do
     setup do
       @parser = VB6Parser.new

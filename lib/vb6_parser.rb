@@ -3,13 +3,12 @@ require 'treetop'
 require 'vb6'
 require 'tire_swing'
 
-module AST
-  include TireSwing::NodeDefinition
-  node :vb6, :version, :layout
-  node :versionspec, :version
+module VB6ToX
+  module AST
+    include TireSwing::NodeDefinition
+    node :root, :version, :layout
+    node :version, :version
+  end
+
+  TireSwing.parses_grammar(VB6, AST)
 end
-
-#Treetop.load(File.join(File.dirname(__FILE__), "vb6.treetop"))
-TireSwing.parses_grammar(VB6, AST)
-
-
