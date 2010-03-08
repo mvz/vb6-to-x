@@ -24,12 +24,79 @@ module VB6ToX
       [_A-Za-z] [_A-Za-z0-9]*
     end
 
+    rule property
+      space? identifier space '=' space literal eol
+    end
+
+    rule compound_property
+      'BeginProperty' space identifier eol
+      property*
+      'EndProperty'
+    end
+
     rule attribute
-      'Attribute' assignment
+      'Attribute' space assignment eol
     end
 
     rule assignment
-      identifier '=' expression
+      identifier space '=' space expression
+    end
+
+    rule literal
+      integer_literal / long_literal / floating_point_literal /
+      string_literal / date_literal / boolean_literal
+    end
+
+    rule integer_literal
+      decimal_literal / hex_literal / octal_literal
+    end
+
+    rule long_literal
+      (decimal_literal / hex_literal) "&" 
+    end
+
+    rule decimal_literal
+      [0-9]+ 
+    end
+
+    rule hex_literal
+      "&" "H" hex_digits 
+    end
+
+    rule hex_digits
+      [0-9a-fA-F]+ 
+    end
+
+    rule octal_literal
+      "&" "o" [0-7]+ 
+    end
+
+    rule floating_point_literal
+      (( decimal_literal / fraction ) (exponent)?) ( "#" / "!" / "@")?
+    end
+
+    rule fraction
+      (decimal_literal) "." ([0-9])* / "." ([0-9])+ 
+    end
+
+    rule exponent
+      [eE] [+-]? [0-9]+ 
+    end
+
+    rule date_literal
+      "#" ( date_only_literal ( " " time_only_literal )? / time_only_literal  ) "#" 
+    end
+
+    rule date_only_literal
+      decimal_literal "/" decimal_literal "/" decimal_literal 
+    end
+
+    rule time_only_literal
+      decimal_literal ":" decimal_literal ":" decimal_literal ( " " )+ ( "AM" / "PM" ) 
+    end
+
+    rule boolean_literal
+      "True" / "False"
     end
 
     rule statement
