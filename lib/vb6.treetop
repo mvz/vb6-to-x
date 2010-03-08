@@ -99,6 +99,10 @@ module VB6ToX
       "True" / "False"
     end
 
+    rule string_literal
+      '"' (!'"' . / '""')* '"'
+    end
+
     rule statement
       command arguments
     end
