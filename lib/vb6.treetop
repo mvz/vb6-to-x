@@ -111,9 +111,13 @@ module VB6ToX
       (' ' / "\t" / "\r" / "\f" / " _\r\n")+
     end
 
+    rule comment
+      "'" ((!"\n" .) / " _\r\n")*
+    end
+
     # TODO: comments are also part of the eol
     rule eol
-      space? ("\n" / !.)
+      space? comment? ("\n" / !.)
     end
   end
 end
