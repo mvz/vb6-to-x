@@ -155,7 +155,7 @@ module VB6ToX
     end
 
     rule eol
-      space? comment? ("\n" / !.) space?
+      space? comment? ("\n" space? ("\n" space?)* / !.) 
     end
   end
 end
