@@ -158,7 +158,7 @@ module VB6ToX
     end
 
     rule statement
-      dim_statement / exit_sub
+      dim_statement / subroutine_call / exit_sub
     end
 
     rule compound_statement
@@ -173,6 +173,10 @@ module VB6ToX
       'If' space boolean_expression space 'Then' eol
       statement*
       'End If' eol
+    end
+
+    rule subroutine_call
+      !(keyword (space / eol)) identifier (space arguments?) eol
     end
 
     rule exit_sub
@@ -201,6 +205,10 @@ module VB6ToX
 
     rule property_retrieval
       identifier '.' identifier
+    end
+
+    rule keyword
+      'If' / 'End' / 'Exit'
     end
 
     rule space
