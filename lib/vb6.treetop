@@ -54,11 +54,15 @@ module VB6ToX
     end
 
     rule dim_statement
-      'Dim' space variable dimensions? (space 'As' space type)? eol
+      'Dim' space variable_declaration (',' space variable_declaration)* eol
     end
 
     rule variable
       identifier type_suffix?
+    end
+
+    rule variable_declaration
+      variable dimensions? (space 'As' space type)?
     end
 
     rule type_suffix
