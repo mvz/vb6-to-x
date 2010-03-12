@@ -4,7 +4,8 @@ module VB6ToX
       version:version?
       layout?
       attributes?
-      module_statements?
+      module_statements
+      subs?
     end
 
     rule version
@@ -58,6 +59,16 @@ module VB6ToX
 
     rule const_statement
       'Const' space identifier space '=' space literal eol
+    end
+
+    rule subs
+      sub*
+    end
+
+    rule sub
+      'Private Sub' space identifier '()' eol
+      statement*
+      'End Sub' eol
     end
 
     rule dimensions
@@ -134,12 +145,12 @@ module VB6ToX
       '"' (!'"' . / '""')* '"'
     end
 
-    rule assignment
-      identifier space '=' space expression
+    rule statement
+      dim_statement
     end
 
-    rule statement
-      command arguments
+    rule assignment
+      identifier space '=' space expression
     end
 
     rule arguments
@@ -155,7 +166,7 @@ module VB6ToX
     end
 
     rule eol
-      space? comment? ("\n" space? ("\n" space?)* / !.) 
+      space? comment? (("\n" space? comment?)* / !.) 
     end
   end
 end
