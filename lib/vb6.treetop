@@ -170,17 +170,17 @@ module VB6ToX
     end
 
     rule inline_if_statement
-      'If' space boolean_expression space 'Then' space statement
+      'If' space expression space 'Then' space statement
     end
 
     rule if_statement
-      'If' space boolean_expression space 'Then' eol
+      'If' space expression space 'Then' eol
       statement*
       'End If' eol
     end
 
     rule for_loop
-      'For' space variable space '=' space value_expression space 'To' space value_expression eol
+      'For' space variable space '=' space value space 'To' space value eol
       statement*
       'Next' (space variable)? eol
     end
@@ -190,22 +190,38 @@ module VB6ToX
     end
 
     rule assignment
-      (property_access / variable) space '=' space value_expression eol
+      (property_access / variable) space '=' space expression eol
     end
 
     rule exit_sub
       'Exit Sub' eol
     end
 
-    rule boolean_expression
-      comparison_expression
+    rule expression
+      comparison
     end
 
-    rule comparison_expression
-      value_expression space '=' space value_expression
+    rule comparison
+      addition space '=' space comparison /
+      addition
     end
 
-    rule value_expression
+    rule addition
+      multiplication space ('+' / '-') space addition /
+      multiplication
+    end
+
+    rule multiplication
+      exponential space ('*' / '/' / '\\' / 'Mod') space multiplication /
+      exponential
+    end
+
+    rule exponential
+      value '^' exponential /
+      value
+    end
+
+    rule value
       function_call / property_access / variable / literal
     end
 
@@ -214,7 +230,7 @@ module VB6ToX
     end
 
     rule arguments
-      value_expression (',' space value_expression)*
+      value (',' space value)*
     end
 
     rule property_access
