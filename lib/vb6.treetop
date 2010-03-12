@@ -58,6 +58,10 @@ module VB6ToX
     end
 
     rule variable
+      typed_identifier
+    end
+
+    rule typed_identifier
       identifier type_suffix?
     end
 
@@ -162,7 +166,7 @@ module VB6ToX
     end
 
     rule compound_statement
-      inline_if_statement / if_statement
+      inline_if_statement / if_statement / for_loop
     end
 
     rule inline_if_statement
@@ -173,6 +177,12 @@ module VB6ToX
       'If' space boolean_expression space 'Then' eol
       statement*
       'End If' eol
+    end
+
+    rule for_loop
+      'For' space variable space '=' space value_expression space 'To' space value_expression eol
+      statement*
+      'Next' (space variable)? eol
     end
 
     rule subroutine_call
@@ -196,11 +206,11 @@ module VB6ToX
     end
 
     rule value_expression
-      function_application / property_access / literal
+      function_call / property_access / variable / literal
     end
 
-    rule function_application
-      identifier '(' arguments? ')'
+    rule function_call
+      typed_identifier '(' arguments? ')'
     end
 
     rule arguments
@@ -212,7 +222,7 @@ module VB6ToX
     end
 
     rule keyword
-      'If' / 'End' / 'Exit'
+      'If' / 'End' / 'Exit' / 'For' / 'Next'
     end
 
     rule space
