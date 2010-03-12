@@ -45,11 +45,24 @@ module VB6ToX
     end
 
     rule module_statements
-      option*
+      option_statement*
+      dim_statement*
     end
 
-    rule option
+    rule option_statement
       'Option' space identifier eol
+    end
+
+    rule dim_statement
+      'Dim' space identifier dimensions? (space 'As' space type)? eol
+    end
+
+    rule dimensions
+      '(' ((decimal_literal ', ')* decimal_literal)? ')'
+    end
+
+    rule type
+      'Integer' / 'Double' / 'String'
     end
 
     rule frx_reference
