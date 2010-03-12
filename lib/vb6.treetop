@@ -45,7 +45,7 @@ module VB6ToX
 
     rule module_statements
       option_statement*
-      dim_statement*
+      (dim_statement / const_statement)*
     end
 
     rule option_statement
@@ -54,6 +54,10 @@ module VB6ToX
 
     rule dim_statement
       'Dim' space identifier dimensions? (space 'As' space type)? eol
+    end
+
+    rule const_statement
+      'Const' space identifier space '=' space literal eol
     end
 
     rule dimensions
