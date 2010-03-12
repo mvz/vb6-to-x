@@ -3,6 +3,7 @@ module VB6ToX
     rule root
       version:version?
       layout:layout?
+      attribute*
       <node(:root)>
     end
 
@@ -35,11 +36,7 @@ module VB6ToX
     end
 
     rule attribute
-      'Attribute' space assignment eol
-    end
-
-    rule assignment
-      identifier space '=' space expression
+      'Attribute' space identifier space '=' space literal eol
     end
 
     rule frx_reference
@@ -106,6 +103,10 @@ module VB6ToX
 
     rule string_literal
       '"' (!'"' . / '""')* '"'
+    end
+
+    rule assignment
+      identifier space '=' space expression
     end
 
     rule statement
