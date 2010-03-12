@@ -25,7 +25,7 @@ module VB6ToX
     end
 
     rule property
-      identifier space '=' space literal eol
+      identifier space '=' space (frx_reference / literal) eol
     end
 
     rule compound_property
@@ -40,6 +40,10 @@ module VB6ToX
 
     rule assignment
       identifier space '=' space expression
+    end
+
+    rule frx_reference
+      string_literal ':' [0-9] [0-9] [0-9] [0-9] 
     end
 
     rule literal
