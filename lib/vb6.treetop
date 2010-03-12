@@ -29,9 +29,9 @@ module VB6ToX
     end
 
     rule compound_property
-      'BeginProperty' space identifier eol
+      space? 'BeginProperty' space identifier eol
       property*
-      'EndProperty'
+      space? 'EndProperty'
     end
 
     rule attribute
