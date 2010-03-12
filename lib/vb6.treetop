@@ -1,15 +1,14 @@
 module VB6ToX
   grammar VB6
     rule root
-      version?
+      version:version?
       layout?
       attributes?
       module_statements?
-      <node(:root)>
     end
 
     rule version
-      'VERSION' space value:'5.00' eol <node(:version)>
+      'VERSION' space value:'5.00' eol
     end
 
     rule layout

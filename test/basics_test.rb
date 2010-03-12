@@ -7,14 +7,21 @@ class BasicsTest < Test::Unit::TestCase
       @parser = VB6Parser.new
     end
     should "parse version" do
-      assert_equal [[:version, "5.00"]], parse_tree_array("VERSION 5.00")
+      ast = @parser.parse("VERSION 5.00")
+      assert_equal "5.00", ast.version.value.text_value
+      assert ast.version.value.terminal?
     end
     should "parse empty string" do
-      assert_equal [], parse_tree_array("")
+      ast = @parser.parse("")
+      assert_equal "", ast.text_value
     end
-  end
-
-  def parse_tree_array(s)
-    ArrayVisitor.visit(VB6Parser.ast(s))
+    context "using the parse_or_abort method" do
+      should "raise an error when the parse fails" do
+	assert_nil @parser.parse "foo"
+	assert_raises RuntimeError do
+	  @parser.parse_or_abort "foo"
+	end
+      end
+    end
   end
 end
