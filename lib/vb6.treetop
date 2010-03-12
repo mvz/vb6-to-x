@@ -158,7 +158,7 @@ module VB6ToX
     end
 
     rule statement
-      dim_statement / subroutine_call / exit_sub
+      dim_statement / assignment / subroutine_call / exit_sub
     end
 
     rule compound_statement
@@ -179,6 +179,10 @@ module VB6ToX
       !(keyword (space / eol)) identifier (space arguments?) eol
     end
 
+    rule assignment
+      (property_access / variable) space '=' space value_expression eol
+    end
+
     rule exit_sub
       'Exit Sub' eol
     end
@@ -192,7 +196,7 @@ module VB6ToX
     end
 
     rule value_expression
-      function_application / property_retrieval / literal
+      function_application / property_access / literal
     end
 
     rule function_application
@@ -203,7 +207,7 @@ module VB6ToX
       value_expression (',' space value_expression)*
     end
 
-    rule property_retrieval
+    rule property_access
       identifier '.' identifier
     end
 
