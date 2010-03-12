@@ -7,7 +7,7 @@ module VB6ToX
     end
 
     rule version
-      space? 'VERSION' space value:'5.00' eol <node(:version)>
+      'VERSION' space value:'5.00' eol <node(:version)>
     end
 
     rule layout
@@ -25,13 +25,13 @@ module VB6ToX
     end
 
     rule property
-      space? identifier space '=' space literal eol
+      identifier space '=' space literal eol
     end
 
     rule compound_property
-      space? 'BeginProperty' space identifier eol
+      'BeginProperty' space identifier eol
       property*
-      space? 'EndProperty' eol
+      'EndProperty' eol
     end
 
     rule attribute
@@ -119,9 +119,8 @@ module VB6ToX
       "'" ((!"\n" .) / " _\r\n")*
     end
 
-    # TODO: comments are also part of the eol
     rule eol
-      space? comment? ("\n" / !.)
+      space? comment? ("\n" / !.) space?
     end
   end
 end
