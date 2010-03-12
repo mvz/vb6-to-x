@@ -162,11 +162,17 @@ module VB6ToX
     end
 
     rule compound_statement
-      inline_if_statement
+      inline_if_statement / if_statement
     end
 
     rule inline_if_statement
       'If' space boolean_expression space 'Then' space statement
+    end
+
+    rule if_statement
+      'If' space boolean_expression space 'Then' eol
+      statement*
+      'End If' eol
     end
 
     rule exit_sub
@@ -186,7 +192,11 @@ module VB6ToX
     end
 
     rule function_application
-      identifier '(' (value_expression (',' space value_expression)*) ')'
+      identifier '(' arguments? ')'
+    end
+
+    rule arguments
+      value_expression (',' space value_expression)*
     end
 
     rule property_retrieval
