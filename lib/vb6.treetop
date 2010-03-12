@@ -1,9 +1,10 @@
 module VB6ToX
   grammar VB6
     rule root
-      version:version?
-      layout:layout?
-      attribute*
+      version?
+      layout?
+      attributes?
+      module_statements?
       <node(:root)>
     end
 
@@ -35,8 +36,20 @@ module VB6ToX
       'EndProperty' eol
     end
 
+    rule attributes
+      attribute*
+    end
+
     rule attribute
       'Attribute' space identifier space '=' space literal eol
+    end
+
+    rule module_statements
+      option*
+    end
+
+    rule option
+      'Option' space identifier eol
     end
 
     rule frx_reference
