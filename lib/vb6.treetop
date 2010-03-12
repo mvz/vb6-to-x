@@ -79,12 +79,12 @@ module VB6ToX
 
     rule sub
       'Private Sub' space identifier '()' eol
-      statement*
+      (statement / compound_statement)*
       'End Sub' eol
     end
 
     rule dimensions
-      '(' ((decimal_literal ', ')* decimal_literal)? ')'
+      '(' ((decimal_literal ',' space)* decimal_literal)? ')'
     end
 
     rule type
@@ -158,15 +158,39 @@ module VB6ToX
     end
 
     rule statement
-      dim_statement
+      dim_statement / exit_sub
     end
 
-    rule assignment
-      identifier space '=' space expression
+    rule compound_statement
+      inline_if_statement
     end
 
-    rule arguments
-      (expression comma arguments / expression)
+    rule inline_if_statement
+      'If' space boolean_expression space 'Then' space statement
+    end
+
+    rule exit_sub
+      'Exit Sub' eol
+    end
+
+    rule boolean_expression
+      comparison_expression
+    end
+
+    rule comparison_expression
+      value_expression space '=' space value_expression
+    end
+
+    rule value_expression
+      function_application / property_retrieval / literal
+    end
+
+    rule function_application
+      identifier '(' (value_expression (',' space value_expression)*) ')'
+    end
+
+    rule property_retrieval
+      identifier '.' identifier
     end
 
     rule space
