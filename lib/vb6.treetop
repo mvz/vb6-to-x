@@ -175,13 +175,13 @@ module VB6ToX
 
     rule if_statement
       'If' space expression space 'Then' eol
-      statement*
+      (statement / compound_statement)*
       'End If' eol
     end
 
     rule for_loop
       'For' space variable space '=' space value space 'To' space value eol
-      statement*
+      (statement / compound_statement)*
       'Next' (space variable)? eol
     end
 
@@ -198,11 +198,21 @@ module VB6ToX
     end
 
     rule expression
+      or_expression
+    end
+
+    rule or_expression
+      and_expression space 'Or' space or_expression /
+      and_expression
+    end
+
+    rule and_expression
+      comparison space 'And' space and_expression /
       comparison
     end
 
     rule comparison
-      addition space '=' space comparison /
+      addition space ('=' / '<' / '>') space comparison /
       addition
     end
 
