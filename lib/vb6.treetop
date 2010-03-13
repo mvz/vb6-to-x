@@ -199,7 +199,11 @@ module VB6ToX
     end
 
     rule assignment
-      (property_access / array_element / variable) space '=' space expression
+       lvalue space '=' space expression
+    end
+
+    rule lvalue
+      property_access / array_element / variable
     end
 
     rule exit_sub
@@ -224,7 +228,7 @@ module VB6ToX
     end
 
     rule get_statement
-      'Get' space filenumber ',' space expression? ',' space variable
+      'Get' space filenumber ',' space expression? ',' space lvalue
     end
 
     rule filenumber
@@ -274,6 +278,7 @@ module VB6ToX
 
     rule value
       '(' expression ')' /
+      # XXX: function call could in fact be array access.
       function_call / property_access / variable / literal
     end
 
