@@ -163,7 +163,7 @@ module VB6ToX
 
     rule statement
       dim_statement / assignment / subroutine_call / exit_sub / exit_for /
-      open_statement
+      open_statement / close_statement
     end
 
     rule compound_statement
@@ -207,9 +207,17 @@ module VB6ToX
       'For' space ('Append' / 'Binary' / 'Input' / 'Output' / 'Random')
       (space 'Access' space ('Read Write' / 'Read' / 'Write') space)? 
       (space ('Shared' / 'Lock Read Write' / 'Lock Read' / 'Lock Write'))? 
-      space 'As' space '#'? expression
+      space 'As' space filenumber
       (space 'Len' space '=' expression)?
       eol
+    end
+
+    rule close_statement
+      'Close' space filenumber (',' space filenumber)* eol
+    end
+
+    rule filenumber
+      '#'? expression
     end
 
     rule expression
@@ -277,7 +285,7 @@ module VB6ToX
 
     rule keyword
       'If' / 'End' / 'Exit' / 'For' / 'Next' / 'And' / 'Or' / 'Not' /
-      'Dim' / 'Open'
+      'Dim' / 'Open' / 'Close'
     end
 
     rule space
