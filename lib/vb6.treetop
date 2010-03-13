@@ -162,7 +162,7 @@ module VB6ToX
     end
 
     rule statement
-      dim_statement / assignment / subroutine_call / exit_sub
+      dim_statement / assignment / subroutine_call / exit_sub / exit_for
     end
 
     rule compound_statement
@@ -195,6 +195,10 @@ module VB6ToX
 
     rule exit_sub
       'Exit Sub' eol
+    end
+
+    rule exit_for
+      'Exit For' eol
     end
 
     rule expression
