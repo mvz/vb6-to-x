@@ -190,7 +190,7 @@ module VB6ToX
     end
 
     rule assignment
-      (property_access / variable) space '=' space expression eol
+      (property_access / array_element / variable) space '=' space expression eol
     end
 
     rule exit_sub
@@ -242,6 +242,7 @@ module VB6ToX
     end
 
     rule function_call
+      # TODO: Are all functions with a type suffix built-in?
       typed_identifier '(' arguments? ')'
     end
 
@@ -251,6 +252,10 @@ module VB6ToX
 
     rule property_access
       identifier '.' identifier
+    end
+
+    rule array_element
+      variable '(' arguments ')'
     end
 
     rule keyword
