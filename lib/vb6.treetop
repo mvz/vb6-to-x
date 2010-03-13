@@ -221,7 +221,9 @@ module VB6ToX
     end
 
     rule comparison
-      addition space ('=' / '<' / '>') space comparison /
+      # TODO: Actually, these comparison operators all have a mutual
+      # precedence :-(
+      addition space ('=' / '<>' / '<=' / '>=' / '<' / '>') space comparison /
       addition
     end
 
