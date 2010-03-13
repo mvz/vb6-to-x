@@ -171,7 +171,7 @@ module VB6ToX
 
     rule statement
       dim_statement / assignment / subroutine_call / exit_sub / exit_for /
-      open_statement / close_statement / get_statement
+      open_statement
     end
 
     rule compound_statement
@@ -221,14 +221,6 @@ module VB6ToX
       (space ('Shared' / 'Lock Read Write' / 'Lock Read' / 'Lock Write'))? 
       space 'As' space expression
       (space 'Len' space '=' expression)?
-    end
-
-    rule close_statement
-      'Close' space filenumber (',' space filenumber)*
-    end
-
-    rule get_statement
-      'Get' space filenumber ',' space expression? ',' space lvalue
     end
 
     rule filenumber
@@ -294,9 +286,11 @@ module VB6ToX
     end
 
     rule arguments
-      expression (',' space expression)*
+      # TODO: what if first argument is optional?
+      expression (',' space expression?)*
     end
 
+    # TODO: This is too simple.
     rule property_access
       identifier '.' identifier
     end
@@ -305,9 +299,11 @@ module VB6ToX
       variable '(' arguments ')'
     end
 
+    # It's only a keyword if I need it to be a keyword. In particular,
+    # Close and Get etc. are just subroutine calls to me.
     rule keyword
       'If' / 'End' / 'Exit' / 'For' / 'Next' / 'And' / 'Or' / 'Not' /
-      'Dim' / 'Open' / 'Close' / 'Get'
+      'Dim' / 'Open'
     end
 
     rule space
