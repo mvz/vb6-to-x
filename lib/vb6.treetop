@@ -207,7 +207,12 @@ module VB6ToX
     end
 
     rule and_expression
-      comparison space 'And' space and_expression /
+      not_expression space 'And' space and_expression /
+      not_expression
+    end
+
+    rule not_expression
+      'Not' space comparison /
       comparison
     end
 
@@ -232,6 +237,7 @@ module VB6ToX
     end
 
     rule value
+      '(' expression ')' /
       function_call / property_access / variable / literal
     end
 
@@ -248,7 +254,7 @@ module VB6ToX
     end
 
     rule keyword
-      'If' / 'End' / 'Exit' / 'For' / 'Next'
+      'If' / 'End' / 'Exit' / 'For' / 'Next' / 'And' / 'Or' / 'Not'
     end
 
     rule space
