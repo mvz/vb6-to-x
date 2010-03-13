@@ -8,6 +8,7 @@ class WholeFileTest < Test::Unit::TestCase
       @data = File.read(File.dirname(__FILE__) + "/files/randtext.frm")
     end
     should "work" do
+      ast = nil
       assert_nothing_raised do
 	ast = @parser.parse_or_abort(@data)
       end

@@ -203,7 +203,7 @@ module VB6ToX
     end
 
     rule lvalue
-      property_access / array_element / variable
+      dotoperation
     end
 
     rule exit_sub
@@ -232,6 +232,8 @@ module VB6ToX
       or_expression
     end
 
+    # TODO: Do we want recursive or iterative definitions of all these
+    # expressions?
     rule or_expression
       and_expression space 'Or' space or_expression /
       and_expression
@@ -276,8 +278,12 @@ module VB6ToX
 
     rule value
       '(' expression ')' /
+      dotoperation / literal
+    end
+
+    rule dotoperation
       # XXX: function call could in fact be array access.
-      function_call / property_access / variable / literal
+      (function_call / variable) ('.' (function_call / variable))*
     end
 
     rule function_call
@@ -288,15 +294,6 @@ module VB6ToX
     rule arguments
       # TODO: what if first argument is optional?
       expression (',' space expression?)*
-    end
-
-    # TODO: This is too simple.
-    rule property_access
-      identifier '.' identifier
-    end
-
-    rule array_element
-      variable '(' arguments ')'
     end
 
     # It's only a keyword if I need it to be a keyword. In particular,
