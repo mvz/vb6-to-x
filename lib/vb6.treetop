@@ -171,7 +171,7 @@ module VB6ToX
 
     rule statement
       dim_statement / assignment / subroutine_call / exit_sub / exit_for /
-      open_statement / close_statement
+      open_statement / close_statement / get_statement
     end
 
     rule compound_statement
@@ -221,6 +221,10 @@ module VB6ToX
 
     rule close_statement
       'Close' space filenumber (',' space filenumber)*
+    end
+
+    rule get_statement
+      'Get' space filenumber ',' space expression? ',' space variable
     end
 
     rule filenumber
@@ -292,7 +296,7 @@ module VB6ToX
 
     rule keyword
       'If' / 'End' / 'Exit' / 'For' / 'Next' / 'And' / 'Or' / 'Not' /
-      'Dim' / 'Open' / 'Close'
+      'Dim' / 'Open' / 'Close' / 'Get'
     end
 
     rule space
