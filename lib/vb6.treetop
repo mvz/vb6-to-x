@@ -45,16 +45,16 @@ module VB6ToX
     end
 
     rule module_statements
-      option_statement*
-      (dim_statement / const_statement)*
+      (option_statement eol)*
+      ((dim_statement / const_statement) eol)*
     end
 
     rule option_statement
-      'Option' space identifier eol
+      'Option' space identifier
     end
 
     rule dim_statement
-      'Dim' space variable_declaration (',' space variable_declaration)* eol
+      'Dim' space variable_declaration (',' space variable_declaration)*
     end
 
     rule variable
@@ -74,7 +74,7 @@ module VB6ToX
     end
 
     rule const_statement
-      'Const' space identifier space '=' space literal eol
+      'Const' space identifier space '=' space literal
     end
 
     rule subs
@@ -83,8 +83,12 @@ module VB6ToX
 
     rule sub
       'Private Sub' space identifier '()' eol
-      (statement / compound_statement)*
+      statements
       'End Sub' eol
+    end
+
+    rule statements
+      ((statement_line / compound_statement) eol)*
     end
 
     rule dimensions
@@ -161,6 +165,10 @@ module VB6ToX
       '"' (!'"' . / '""')* '"'
     end
 
+    rule statement_line
+      statement (space ':' space statement)*
+    end
+
     rule statement
       dim_statement / assignment / subroutine_call / exit_sub / exit_for /
       open_statement / close_statement
@@ -171,35 +179,35 @@ module VB6ToX
     end
 
     rule inline_if_statement
-      'If' space expression space 'Then' space statement
+      'If' space expression space 'Then' space statement_line
     end
 
     rule if_statement
       'If' space expression space 'Then' eol
-      (statement / compound_statement)*
-      'End If' eol
+      statements
+      'End If'
     end
 
     rule for_loop
       'For' space variable space '=' space value space 'To' space value eol
-      (statement / compound_statement)*
-      'Next' (space variable)? eol
+      statements
+      'Next' (space variable)?
     end
 
     rule subroutine_call
-      !(keyword (space / eol)) identifier (space arguments?) eol
+      !(keyword (space / eol)) identifier (space arguments?)
     end
 
     rule assignment
-      (property_access / array_element / variable) space '=' space expression eol
+      (property_access / array_element / variable) space '=' space expression
     end
 
     rule exit_sub
-      'Exit Sub' eol
+      'Exit Sub'
     end
 
     rule exit_for
-      'Exit For' eol
+      'Exit For'
     end
 
     rule open_statement
@@ -209,11 +217,10 @@ module VB6ToX
       (space ('Shared' / 'Lock Read Write' / 'Lock Read' / 'Lock Write'))? 
       space 'As' space filenumber
       (space 'Len' space '=' expression)?
-      eol
     end
 
     rule close_statement
-      'Close' space filenumber (',' space filenumber)* eol
+      'Close' space filenumber (',' space filenumber)*
     end
 
     rule filenumber
