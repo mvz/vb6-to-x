@@ -247,7 +247,7 @@ module VB6ToX
     end
 
     rule arguments
-      value (',' space value)*
+      expression (',' space expression)*
     end
 
     rule property_access
