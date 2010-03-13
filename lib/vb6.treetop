@@ -219,7 +219,7 @@ module VB6ToX
       'For' space ('Append' / 'Binary' / 'Input' / 'Output' / 'Random')
       (space 'Access' space ('Read Write' / 'Read' / 'Write') space)? 
       (space ('Shared' / 'Lock Read Write' / 'Lock Read' / 'Lock Write'))? 
-      space 'As' space filenumber
+      space 'As' space expression
       (space 'Len' space '=' expression)?
     end
 
@@ -232,10 +232,11 @@ module VB6ToX
     end
 
     rule filenumber
-      '#'? expression
+      '#' value
     end
 
     rule expression
+      filenumber /
       or_expression
     end
 
@@ -267,7 +268,12 @@ module VB6ToX
     end
 
     rule multiplication
-      exponential space ('*' / '/' / '\\' / 'Mod') space multiplication /
+      unary_operation space ('*' / '/' / '\\' / 'Mod') space multiplication /
+      unary_operation
+    end
+
+    rule unary_operation
+      '-' exponential /
       exponential
     end
 
