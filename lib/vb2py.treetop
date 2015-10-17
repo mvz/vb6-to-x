@@ -1,0 +1,934 @@
+# Straight port of vb2py's vb grammar
+
+module VB6ToX
+  grammar VB6
+    # Basic building blocks
+    # Basic elements
+    rule identifier
+      (safe_letter/("_" safe_letter)) (safe_letter / digit / "_")* type_marker?
+    end
+
+    rule type_marker
+      "$" / "%" / "#" / "&"
+    end
+
+    rule NEWLINE
+      "\n"
+    end
+
+    rule wsp
+      (" "/"\t")
+    end
+
+    # Also includes the hack for a unicode marker
+    rule safe_letter
+      letter / '~~'
+    end
+
+    rule letter
+      lowercase / uppercase
+    end
+
+    rule lowercase
+      [a-z]
+    end
+
+    rule uppercase
+      [A-Z]
+    end
+
+    rule digit
+      [0-9]
+    end
+
+    rule stringliteral
+      '"' stringitem* '"'
+    end
+
+    rule stringitem
+      stringchar / escapeseq / '""'
+    end
+
+    rule stringchar
+      # FIXME: Original rule: -('"' / NEWLINE)+
+      !('"' / NEWLINE) .
+    end
+
+    rule dateliteral
+      "#" integer "/" integer ("/" integer)? "#"
+    end
+
+    rule escapeseq
+      "\\" stringchar
+    end
+
+    rule longinteger
+      integer ("l" / "L")
+    end
+
+    rule integer
+      "-"? decimalinteger ("%" / "&")?
+    end
+
+    rule decimalinteger
+      digit+
+    end
+
+    rule octinteger
+      "0" octdigit+
+    end
+
+    rule hexinteger
+      "&H" hexdigit+ "&"?
+    end
+
+    rule nonzerodigit
+      [1-9]
+    end
+
+    rule octdigit
+      [0-7]
+    end
+
+    rule hexdigit
+      digit / [a-f] / [A-F]
+    end
+
+    rule floatnumber
+      ("-"? (exponentfloat / pointfloat)) / (integer "#")
+    end
+
+    rule pointfloat
+      (intpart? fraction) / (intpart ".")
+    end
+
+    rule exponentfloat
+      (pointfloat / intpart)
+      exponent
+    end
+
+    rule intpart
+      digit+
+    end
+
+    rule fraction
+      "." digit+
+    end
+
+    rule exponent
+      ("e" / "E") ("+" / "-")? digit+
+    end
+
+    rule atom
+      object / literal
+    end
+
+    rule literal
+      dateliteral / stringliteral / floatnumber / integer / longinteger / hexinteger
+    end
+
+    rule name
+      identifier
+    end
+
+    rule colon
+      wsp* ":" wsp*
+    end
+
+    rule hash
+      "#"
+    end
+
+    # Blocks and lines
+    rule block
+      block_content+
+    end
+
+    rule block_content
+      !block_terminator line
+    end
+
+    # The inline_if_statement appears here and also as a statement because sometimes the
+    # implicit_call_statement in the inline_if consumes the line_end - presumably there is a way
+    # to prevent this and simplify what is going on here!
+
+    rule line
+      (!label_definition line_body) / (label_definition line_body?)
+    end
+
+    rule line_body
+      (implicit_call_statement / ((compound_statement / single_statement) (line_end / (colon line_end?))) / inline_if_statement)
+    end
+
+    rule line_end
+      comment_statement? NEWLINE
+    end
+
+    rule compound_line
+      block
+    end
+
+    rule file
+      block+
+    end
+
+    rule block_terminator
+      (end_terminator / "Else" / "ElseIf" / "Case" / "Next") (wsp+ / line_end)
+    end
+
+    rule end_terminator
+      ("End" wsp+ ("If" / "Function" / "Subroutine")) / "END"
+    end
+
+    # Statements
+    rule statement
+      multi_statement_line / single_statement
+    end
+
+    rule single_statement
+      (
+      comment_statement /
+      external_declaration /
+      open_statement /
+      on_statement /
+      print_statement /
+      get_statement /
+      input_statement /
+      line_input_statement /
+      put_statement /
+      call_statement /
+      inline_if_statement /
+      const_statement /
+      dim_statement /
+      inline_for_statement /
+      redim_statement /
+      exit_statement /
+      set_statement /
+      assignment_statement /
+      lset_statement /
+      rset_statement /
+      label_statement /
+      goto_statement /
+      resume_statement /
+      name_statement /
+      non_vb_statement /
+      option_statement /
+      event_definition /
+      close_statement /
+      end_statement /
+      seek_statement
+      )
+    end
+
+    rule compound_statement
+      for_statement /
+      for_each_statement /
+      select_statement /
+      while_statement /
+      do_statement /
+      if_statement /
+      sub_definition /
+      fn_definition /
+      with_statement /
+      user_type_definition /
+      enumeration_definition /
+      property_definition /
+      non_vb_block
+    end
+
+    rule multi_statement_line
+      ((single_statement colon) / label_statement) (wsp+ (compound_statement / statement))?
+    end
+
+    # Keywords
+    rule keyword
+      normal_keyword / block_terminator
+    end
+
+    # NB: 'BEGIN' is case sensitive because it is not a VB keyword
+    rule normal_keyword
+      (
+      "Function" / "Sub" / "Do" / "While" / "Wend" / "Loop" / "For" / "Next" / "Exit" /
+      "If"  / "Select" / "Type" / "Set" / "ReDim" / "Dim" / "Print" / "Open" / "With" /
+      "Enum" / "Property" / "Input" / "Close" / "Then" / "Else" / "Resume" / "To" /
+      "Public" / "Private" / "Static" / "Attribute" / "Const" / "Option" / "End" /
+      "Event" / "Seek" / "BEGIN" / "Rem" / "Let" / "Reset" / "LSet" / "RSet"
+      ) (wsp / line_end)
+    end
+
+    # Expressions
+
+    rule expression
+      (pre_named_argument? passing_semantics? pre_operator? sign? par_expression
+      (operation par_expression)*) / line_expression
+    end
+
+    rule par_expression
+      point / (l_bracket expression r_bracket) / base_expression
+    end
+
+    rule base_expression
+      simple_expr (operation simple_expr)?
+    end
+
+    rule simple_expr
+      pre_operator? wsp* (sign wsp*)* (call / atom / channelid) wsp*
+    end
+
+    rule l_bracket
+      wsp* "(" wsp*
+    end
+
+    rule r_bracket
+      wsp* ")" wsp*
+    end
+
+    rule operation
+      "+" / "-" / "*" / "/" / "^" / "&&" / "&" / "||" / "\\" / "Not" / "Mod" / compare
+    end
+
+    rule compare
+      "Or" / "And" / "Xor" / "=" / "<=" / ">=" / "<>" / "<" / ">" / "Is" / "Like"
+    end
+
+    rule sign
+      "-" / "+"
+    end
+
+    rule pre_named_argument
+      wsp* named_argument ":=" wsp*
+    end
+
+    rule named_argument
+      identifier
+    end
+
+    rule pre_operator
+      pre_not / pre_typeof
+    end
+
+    rule pre_not
+      wsp* "Not" wsp+
+    end
+
+    rule pre_typeof
+      wsp* "TypeOf" wsp+
+    end
+
+    rule channelid
+      "#" atom
+    end
+
+    # Line (connecting points)
+    rule line_expression
+      point wsp* "-" wsp* point
+    end
+
+    rule point
+      (l_bracket expression wsp* "," wsp* expression r_bracket)
+    end
+
+    # Single statements
+    # Assigment
+    rule assignment_statement
+      ("Let" wsp+)? assignment_body
+    end
+
+    rule assignment_body
+      object wsp* "=" wsp* expression
+    end
+
+    rule set_statement
+      "Set" wsp+ object wsp* "=" new_keyword? expression
+    end
+
+    rule new_keyword
+      wsp? "New" wsp+
+    end
+
+    rule object
+      !keyword implicit_object? (primary (("." attribute) / parameter_list)*)
+    end
+
+    rule bare_object
+      !keyword implicit_object? primary ("." attribute)*
+    end
+
+    rule implicit_object
+      "."
+    end
+
+    rule primary
+      identifier
+    end
+
+    rule attribute
+      "["? identifier "]"?
+    end
+
+    rule lset_statement
+      "LSet" wsp+ assignment_body
+    end
+
+    rule rset_statement
+      "RSet" wsp+ assignment_body
+    end
+
+    # Comment
+    rule comment_statement
+      wsp* comment_start (vb2py_directive  / comment_body)
+    end
+
+    rule comment_body
+      (stringitem / '"')*
+    end
+
+    rule comment_start
+      "'" / "Rem"
+    end
+
+    # External libraries
+    rule external_declaration
+      (scope wsp+)? "Declare" wsp+ ("Sub" / "Function") wsp+ identifier wsp+ "Lib" wsp+
+      stringliteral wsp+ ("Alias" wsp+ stringliteral wsp+)? formal_param_list type_definition?
+    end
+
+    # Labels and GoTo
+    rule label_definition
+      label_statement (wsp+ / line_end)
+    end
+
+    rule label_statement
+      (label ":") / decimalinteger
+    end
+
+    rule label
+      (identifier / decimalinteger)
+    end
+
+    rule goto_statement
+      "GoTo" wsp+ label
+    end
+
+    # Dim
+    rule dim_statement
+      unscoped_dim / scoped_dim
+    end
+
+    rule unscoped_dim
+      "Dim" wsp+ basic_dim
+    end
+
+    rule scoped_dim
+      scope wsp+ ("Dim" wsp+)? basic_dim
+    end
+
+    rule basic_dim
+      object_definition ("," wsp* object_definition)*
+    end
+
+    rule object_definition
+      with_events? bare_object (unsized_definition / size_definition)? type_definition?
+    end
+
+    rule const_statement
+      (scope wsp+)? "Const" wsp+ const_definition ("," wsp* const_definition)*
+    end
+
+    rule const_definition
+      identifier type_definition? wsp* "=" wsp* expression
+    end
+
+    rule type_definition
+      (wsp+ "As" wsp+ new_keyword? type array_indicator? string_size_definition? wsp*)
+    end
+
+    rule unsized_definition
+      "(" wsp* ")"
+    end
+
+    rule size_definition
+      "(" (size_range / size)? ("," wsp* (size_range / size))* ")"
+    end
+
+    rule size
+      expression
+    end
+
+    rule size_range
+      size wsp* "To" wsp* size
+    end
+
+    rule type
+      primary ("." attribute)*
+    end
+
+    rule scope
+      "Global" / "Private" / "Public" / "Static" / "Friend"
+    end
+
+    rule value
+      literal
+    end
+
+    rule redim_statement
+      "ReDim" wsp+ preserve_keyword? basic_dim
+    end
+
+    rule preserve_keyword
+      "Preserve" wsp+
+    end
+
+    rule array_indicator
+      wsp* "()"
+    end
+
+    rule string_size_definition
+      wsp* "*" wsp* string_size_indicator
+    end
+
+    rule string_size_indicator
+      atom
+    end
+
+    rule with_events
+      wsp* "WithEvents" wsp+
+    end
+
+    # On Error Goto
+    rule on_statement
+      (on_error_goto / on_error_resume / on_goto)
+    end
+
+    rule on_error_goto
+      on_error "GoTo" wsp+ label
+    end
+
+    rule on_error_resume
+      on_error "Resume" wsp+ "Next"
+    end
+
+    rule on_goto
+      on_variable "GoTo" wsp+ bare_list
+    end
+
+    rule on_error
+      label_definition? "On" wsp+ local? "Error" wsp+
+    end
+
+    rule on_variable
+      label_definition? "On" wsp+ expression
+    end
+
+    rule local
+      "Local" wsp+
+    end
+
+    # Print / Get
+    rule print_statement
+      label_statement? "Print" (wsp+ channel_id wsp* "," wsp*)? print_list?
+    end
+
+    rule channel_id
+      "#" expression
+    end
+
+    rule hold_cr
+      ";"
+    end
+
+    rule get_statement
+      label_statement? "Get" wsp+ channel_id wsp* bare_list
+    end
+
+    rule input_statement
+      label_statement? "Input" wsp+ channel_id wsp* bare_list
+    end
+
+    rule line_input_statement
+      label_statement? "Line" wsp+ input_statement
+    end
+
+    rule put_statement
+      label_statement? "Put" wsp+ channel_id wsp* bare_list hold_cr?
+    end
+
+    rule print_list
+      wsp* print_separator* (expression wsp* print_separator* wsp*)*
+    end
+
+    rule print_separator
+      "," / ";"
+    end
+
+    # Seek
+    rule seek_statement
+      label_statement? "Seek" wsp+ channel_id wsp* "," wsp* expression
+    end
+
+    # Open/Close
+    rule open_statement
+      label_definition? "Open" wsp+ filename "For" wsp+ open_mode+ "As" wsp+ "#"? channel
+      (wsp* "Len" wsp* "=" wsp* access_length)?
+    end
+
+    rule filename
+      expression
+    end
+
+    rule channel
+      expression
+    end
+
+    rule access_length
+      expression
+    end
+
+    rule open_mode
+      !"As" identifier wsp+
+    end
+
+    rule close_statement
+      label_definition? ("Close" / "Reset") (wsp+ channel_number ("," wsp* channel_number)*)?
+    end
+
+    rule channel_number
+      (channel_id   / expression)
+    end
+
+    # Calls
+
+    rule call_statement
+      label_definition? ("Call" wsp+ object list?)
+    end
+
+    rule implicit_call_statement
+      label_definition? !keyword (simple_expr bare_list (line_end / colon))
+    end
+
+    rule inline_implicit_call
+      label_definition? !keyword (simple_expr bare_list)
+    end
+
+    rule list
+      "(" bare_list ")"
+    end
+
+    rule bare_list
+    #             (wsp* bare_list_item? (list_separator wsp* bare_list_item?)*)?
+      (wsp* positional_item* bare_list_item?)
+    end
+
+    rule call
+      !keyword object parameter_list?
+    end
+
+    rule positional_item
+      (bare_list_item / missing_positional) list_separator
+    end
+
+    rule missing_positional
+      wsp*
+    end
+
+    rule bare_list_item
+      addressof? expression
+    end
+
+    rule addressof
+      "AddressOf" wsp+
+    end
+
+    rule list_separator
+      "," / ";"
+    end
+
+    # Resume statement
+    rule resume_statement
+      label_definition? "Resume" (wsp+ resume_location)?
+    end
+
+    rule resume_location
+      "Next" / label
+    end
+
+    # Exit statement
+    rule exit_statement
+      "Exit" wsp+ ("Sub" / "Function" / "For" / "Do" / "Loop" / "Property")
+    end
+
+    # Name statement
+    rule name_statement
+      label_definition? "Name" wsp+ expression "As" expression
+    end
+
+    # End statement
+    rule end_statement
+      "End"
+    end
+
+    # Event definition
+    rule event_definition
+      label_statement? (scope wsp+)? "Event" wsp+ object formal_param_list?
+    end
+
+    # Compound statements
+    # Do/While etc
+    rule while_statement
+      "While" wsp+ expression line_end block label_definition? ("End While" / "Wend")
+    end
+
+    rule do_statement
+      "Do" (while_clause / until_clause)? line_end block
+      label_definition? "Loop" (post_until_clause / post_while_clause)?
+    end
+
+    rule while_clause
+      (wsp+ "While" wsp+ expression)
+    end
+
+    rule until_clause
+      (wsp+ "Until" wsp+ expression)
+    end
+
+    rule post_until_clause
+      until_clause
+    end
+
+    rule post_while_clause
+      while_clause
+    end
+
+    # Select case
+    rule select_statement
+      "Select" wsp+ "Case" wsp+ expression line_end
+      case_comment_block?
+      case_item_block*
+      case_else_block?
+      label_definition? "End Select"
+    end
+
+    rule case_item_block
+      label_definition? "Case" wsp+ case_list case_body
+    end
+
+    rule case_else_block
+      label_definition? "Case" wsp+ "Else" case_body
+    end
+
+    rule case_body
+      (colon line_end block?) / ((line_end / colon) block?)
+    end
+
+    rule case_list
+      !"Else" (case_expression ("," case_expression)*)?
+    end
+
+    rule case_expression
+      expression (to_keyword expression)?
+    end
+
+    rule to_keyword
+      "To"
+    end
+
+    rule case_comment_block
+      block
+    end
+
+    # If
+    rule inline_if_statement
+      label_definition? hash? "If" condition hash? "Then" wsp+ inline_if_block
+      (wsp* hash? "Else" wsp+ inline_else_block)?
+    end
+
+    rule if_statement
+      hash? "If" condition hash? "Then" line_end if_block?
+      else_if_statement*
+      else_statement?
+      label_definition? hash? "End If"
+    end
+
+    rule if_block
+      block
+    end
+
+    rule else_if_statement
+      (label_definition? hash? "ElseIf" condition hash? "Then" line_end else_if_block?)
+    end
+
+    rule else_statement
+      (label_definition? hash? "Else" wsp* line_end else_block?)
+    end
+
+    rule else_block
+      block
+    end
+
+    rule else_if_block
+      block
+    end
+
+    rule condition
+      expression
+    end
+
+    rule inline_if_block
+      !comment_statement inline_block
+    end
+
+    rule inline_else_block
+      inline_block
+    end
+
+    rule inline_block
+      (statement / inline_implicit_call)
+    end
+
+    # For and for each
+    rule for_statement
+      "For" wsp+ object wsp* "=" wsp*
+      expression "To" wsp+ expression for_stepping? line_end
+      block?
+      label_definition? "Next" (wsp+ object)?
+    end
+
+    rule for_stepping
+      "Step" expression
+    end
+
+    rule for_each_statement
+      "For" wsp+ "Each" wsp+ object wsp* "In" wsp+
+      expression line_end
+      block?
+      label_definition? "Next" (wsp+ object)?
+    end
+
+    rule inline_for_statement
+      "For" wsp+ object wsp* "=" wsp*
+      expression "To" wsp+ expression for_stepping?
+      colon body "Next" (wsp+ object)?
+    end
+
+    rule body
+      (implicit_call_statement / (single_statement colon))*
+    end
+
+    # Subs and functions
+    rule sub_definition
+      label_definition? (scope wsp*)? (static wsp*)? "Sub" wsp+ identifier wsp*
+      formal_param_list line_end block? label_definition? "End Sub"
+    end
+
+    rule formal_param_list
+      "(" wsp* formal_param? (wsp* "," wsp* formal_param)* ")"
+    end
+
+    rule formal_param
+      optional? passing_semantics? (object / identifier) array_indicator? type_definition? default_value?
+    end
+
+    rule optional
+      "Optional" wsp+
+    end
+
+    rule passing_semantics
+      ("ByVal" / "ByRef") wsp+
+    end
+
+    rule parameter_list
+      list
+    end
+
+    rule fn_definition
+      label_definition? (scope wsp*)? "Function" wsp+ identifier wsp*
+      formal_param_list type_definition? line_end block? label_definition? "End Function"
+    end
+
+    rule default_value
+      wsp* "=" expression
+    end
+
+    rule static
+      "Static"
+    end
+
+    # Properties
+    rule property_definition
+      label_definition? (scope wsp*)? "Property" wsp+ property_decorator_type wsp+ identifier
+      formal_param_list type_definition? line_end block? label_definition? "End Property"
+    end
+
+    rule property_decorator_type
+      "Get" / "Set" / "Let"
+    end
+
+    # User Types
+    rule user_type_definition
+      (scope wsp+)? "Type" wsp+ identifier line_end ((object_definition / comment_statement) line_end)* label_definition? "End Type"
+    end
+
+    # With
+    rule with_statement
+      label_definition? "With" wsp+ expression line_end block? label_definition? "End With"
+    end
+
+    # Enumerations
+    rule enumeration_definition
+      (scope wsp+)? "Enum" wsp identifier line_end (enumeration_item line_end)* "End Enum"
+    end
+
+    rule enumeration_item
+      !"End" identifier (wsp* "=" wsp* expression)?
+    end
+
+    # Non VB stuff
+    rule non_vb_statement
+      class_header_statement / attribute_statement
+    end
+
+    rule non_vb_block
+      class_header_block
+    end
+
+    # Class file headers
+    rule class_header_statement
+      "VERSION" wsp+ floatnumber wsp+ "CLASS"
+    end
+
+    rule class_header_block
+      "BEGIN" line_end block "END"
+    end
+
+    # vb2py Directives
+    rule vb2py_directive
+      wsp* "VB2PY-" directive_type wsp* ":" wsp* directive_body
+    end
+
+    rule directive_type
+      identifier
+    end
+
+    rule directive_body
+      config_section "." config_name wsp* ("=" wsp* expression)?
+    end
+
+    rule config_section
+      identifier
+    end
+
+    rule config_name
+      identifier
+    end
+
+    # attribute statement
+    rule attribute_statement
+      "Attribute" wsp+ object wsp* "=" wsp* expression (wsp* "," wsp* expression)*
+    end
+
+    # option_statement
+    rule option_statement
+      "Option" wsp+ atom (wsp* atom)* comment_statement?
+    end
+  end
+end
