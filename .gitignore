@@ -1,4 +1,5 @@
-lib/vb6.vb
+lib/vb6.rb
+lib/vb2py.rb
 antlr
 javacc
 treetop-oniguruma
